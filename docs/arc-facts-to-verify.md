@@ -12,7 +12,7 @@ facts.
 - [ ] Private mempool / MEV-protected relay options on Arc
 - [ ] Actual cirBTC/USYC token contract addresses, decimals, and real liquidity depth
 - [ ] Whether the OpenZeppelin `ERC4626` version ultimately pinned in `package.json`
-      includes the default virtual-shares offset — verify the specific version,
+      includes the default virtual-shares offset, verify the specific version,
       don't assume
 
 ## Verified (checked live against Arc testnet, not just docs)
@@ -27,7 +27,7 @@ facts.
 - [x] Transfers to `address(0)` revert on both the native and ERC-20 interface,
       with the same underlying reason (`"Zero address not allowed"`), confirmed
       via live `eth_call` simulation on both paths.
-## Blocking — must be resolved before Phase 2 is considered fully closed
+## Blocking, must be resolved before Phase 2 is considered fully closed
 
 - [ ] **Blocklisted-address transfer behavior, not yet verified.** Confirm
       live on Arc testnet the transfer behavior toward a blocklisted address,
@@ -35,5 +35,5 @@ facts.
       way the zero-address revert was already confirmed live. This requires
       either finding a real blocklisted address on testnet, or simulating one
       if Circle's testnet environment allows it. Do not assume this behaves
-      the same as the zero-address case until it is verified live — treating
+      the same as the zero-address case until it is verified live, treating
       it as "probably the same" is not sufficient to close this item.

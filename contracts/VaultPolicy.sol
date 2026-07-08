@@ -6,13 +6,13 @@ import {IVaultPolicy, IAutoPausePayer} from "./interfaces/IVaultPolicy.sol";
 
 /// @notice The deterministic, non-AI gate every proposed vault decision must
 /// pass before MandateVault builds a transaction. Fully immutable except the
-/// `paused` flag — a materially different risk profile means a new
+/// `paused` flag, a materially different risk profile means a new
 /// Vault+Policy pair via the factory, never a parameter change on a live one.
 /// No AI involvement anywhere: validateDecision is a pure view function with
 /// no string/reasoning parameter, so reasoning text is structurally incapable
 /// of influencing this contract.
 ///
-/// Oracle feed addresses are deliberately NOT stored here — price data is
+/// Oracle feed addresses are deliberately NOT stored here, price data is
 /// supplied per call as part of VaultState, so this contract's only mutable
 /// storage is `paused`. See docs/architecture.md for the reasoning.
 contract VaultPolicy is IVaultPolicy {
@@ -54,7 +54,7 @@ contract VaultPolicy is IVaultPolicy {
     uint256 public immutable autoPauseBountyAmount;
 
     /// @dev Set once in the constructor. No setter exists anywhere in this
-    /// contract — loosening a limit always means deploying a new
+    /// contract, loosening a limit always means deploying a new
     /// Vault+Policy pair, never mutating a live one.
     mapping(address asset => uint256 maxBps) public maxAllocationBpsPerAsset;
     mapping(address asset => bool isStable) public isStableAsset;
@@ -112,7 +112,7 @@ contract VaultPolicy is IVaultPolicy {
         _;
     }
 
-    /// @notice Human, subjective pause path. Never blocks withdrawals — only
+    /// @notice Human, subjective pause path. Never blocks withdrawals, only
     /// the code that gates new deposits/new decision execution checks this.
     function pause() external onlyPauser {
         paused = true;
@@ -127,7 +127,7 @@ contract VaultPolicy is IVaultPolicy {
     /// @notice The deterministic gate. `currentHoldings` and
     /// `currentDrawdownBps` in `state` represent the vault's projected
     /// allocation and drawdown AS IF this decision executes, supplied by the
-    /// caller (the keeper/MandateVault) — this contract only ever validates
+    /// caller (the keeper/MandateVault), this contract only ever validates
     /// a resulting state against immutable limits, it never computes trade
     /// deltas itself.
     function validateDecision(Decision calldata decision, VaultState calldata state)
@@ -189,7 +189,7 @@ contract VaultPolicy is IVaultPolicy {
         return _evaluateAutoPause(state);
     }
 
-    /// @notice Permissionless — anyone can call this, mirroring the
+    /// @notice Permissionless, anyone can call this, mirroring the
     /// permissionless-escalation pattern already proven in P2PMarket.sol's
     /// expire(). Only actually pauses if an objective condition is true.
     /// Pays autoPauseBountyAmount to whoever's call triggers the pause, so
@@ -200,7 +200,7 @@ contract VaultPolicy is IVaultPolicy {
     /// `paused`, and that is set BEFORE the external call (checks-effects-
     /// interactions), so even a malicious recipient that reenters
     /// checkAndAutoPause during the payout hits `require(!paused)` and
-    /// reverts immediately — that reverts only the reentrant attempt,
+    /// reverts immediately, that reverts only the reentrant attempt,
     /// which the outer call's try/catch simply records as a failed payout,
     /// exactly like any other payout failure. The actual token transfer
     /// happens inside MandateVault.payAutoPauseBounty, which DOES hold

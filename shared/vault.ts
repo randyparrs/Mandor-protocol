@@ -4,7 +4,7 @@
 // authoritative for fund safety.
 
 export interface StrategyAuthorRef {
-  // Kept as a plain identifier, not assumed to always be "the team" — see
+  // Kept as a plain identifier, not assumed to always be "the team", see
   // docs/architecture.md for why this stays generic even though Phase 1 only
   // ever populates it with team-authored vaults.
   id: string;

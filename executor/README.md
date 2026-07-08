@@ -19,7 +19,7 @@ submits it to `MandateVault.executeDecision(...)`, and does nothing else.
 - Never skip simulation before submission.
 - Never let the keeper run without a heartbeat. It is not a fund-safety
   single point of failure (withdrawals never route through it), but it is an
-  availability one — a confirmed decision sitting unexecuted, or missed
+  availability one, a confirmed decision sitting unexecuted, or missed
   heartbeats, must alert into the same monitoring channel as everything else
   in `docs/threat-model.md`.
 

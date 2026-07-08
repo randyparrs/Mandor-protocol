@@ -1,7 +1,7 @@
 // The structured decision schema Claude must emit. Strict, no free text for
 // anything execution-relevant. `reasoning` is the one free-text field and it
 // is read only by explainability/timeline code, never by anything with
-// execution authority — the actual authority boundary is enforced in
+// execution authority, the actual authority boundary is enforced in
 // VaultPolicy.sol, which has no string parameter in its interface at all.
 
 export type AssetSymbol = "USDC" | "EURC" | "USYC" | "cirBTC" | string;
@@ -33,7 +33,7 @@ export interface VaultDecision {
 
 // The ops confirmation queue's wrapper around a proposed decision. A decision
 // that sits unconfirmed past expiresAt is auto-discarded by decisionPipeline
-// as "expired" — it can never be confirmed late and rubber-stamped after
+// as "expired", it can never be confirmed late and rubber-stamped after
 // market conditions have moved on, and it is never auto-retried.
 export type DecisionStatus =
   | "pending_confirmation"

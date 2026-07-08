@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 /// @notice The external interface of VaultPolicy: the deterministic,
 /// no-AI gate every proposed decision must pass before MandateVault builds
 /// a transaction. No string/reasoning field appears anywhere here, by
-/// construction — reasoning text is structurally incapable of influencing
+/// construction, reasoning text is structurally incapable of influencing
 /// this contract, it simply has no parameter to carry it.
 interface IVaultPolicy {
     enum DecisionAction {
@@ -34,7 +34,7 @@ interface IVaultPolicy {
 
     /// @notice Price data for one asset. `referencePrice` is a second,
     /// independent source (e.g. a TWAP or a secondary feed) used purely to
-    /// bound deviation risk from a single manipulated feed — VaultPolicy
+    /// bound deviation risk from a single manipulated feed, VaultPolicy
     /// never stores or switches feed addresses itself, see docs/architecture.md.
     struct AssetPrice {
         address asset;

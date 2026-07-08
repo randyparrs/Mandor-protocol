@@ -17,7 +17,7 @@ fails validation is logged and discarded, never retried automatically.
 Initial vaults are created and configured only by the team (a curator model,
 the same approach established DeFi vault platforms like Gauntlet or Steakhouse
 Financial use). There is no public "create your own AI agent" feature, and
-there will not be one at any phase — letting strangers create AI-managed
+there will not be one at any phase, letting strangers create AI-managed
 vaults was judged too risky to be worth building at all, not just risky enough
 to delay.
 

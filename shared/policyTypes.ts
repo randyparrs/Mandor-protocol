@@ -11,13 +11,13 @@ export interface PolicyLimits {
   minStableAllocationBps: number;
   oracleMaxStalenessSeconds: number;
   oracleMaxDeviationBps: number;
-  // Guardian auto-pause thresholds — checked by the permissionless
+  // Guardian auto-pause thresholds, checked by the permissionless
   // checkAndAutoPause path, independent of the human PAUSER role.
   maxDrawdownSpeedBpsPerWindow: number;
   drawdownSpeedWindowSeconds: number;
   // Paid, in the vault's own asset, to whoever's checkAndAutoPause call
   // actually triggers a pause. Keeps the permissionless path real even if
-  // the team's own watcher bot is down — same incentive pattern lending
+  // the team's own watcher bot is down, same incentive pattern lending
   // protocols use for liquidations. Deliberately capped and tiny relative
   // to the loss a timely pause prevents.
   autoPauseBountyAmount: string;

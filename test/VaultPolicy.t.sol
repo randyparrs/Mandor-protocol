@@ -147,7 +147,7 @@ contract VaultPolicyTest is Test {
         stableBps = uint16(bound(stableBps, 0, uint16(MIN_STABLE_BPS) - 1));
         // EURC held well within its own 5000 bps cap on purpose, so this
         // test isolates the min-stable check from the max-allocation check
-        // above — holdings need not sum to 10000, VaultPolicy only checks
+        // above, holdings need not sum to 10000, VaultPolicy only checks
         // each asset against its own cap and sums the stable ones.
         uint16 nonStableBps = 1000;
 
@@ -246,7 +246,7 @@ contract VaultPolicyTest is Test {
     }
 
     /// @dev EMERGENCY_EXIT_TO_STABLE always passes regardless of how bad
-    /// currentDrawdownBps is — the safety valve is unconditional, by design.
+    /// currentDrawdownBps is, the safety valve is unconditional, by design.
     function testFuzz_emergencyExitAlwaysPassesRegardlessOfDrawdown(uint16 drawdownBps) public view {
         IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
             currentDrawdownBps: drawdownBps,

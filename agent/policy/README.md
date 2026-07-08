@@ -1,6 +1,6 @@
 # agent/policy/
 
-`offchainPolicyCheck.ts` — a fast, advisory TypeScript re-implementation of
+`offchainPolicyCheck.ts`, a fast, advisory TypeScript re-implementation of
 `VaultPolicy.sol`'s validation math. Used before ever touching the chain, so
 the decision pipeline gets instant feedback instead of waiting on a
 transaction.

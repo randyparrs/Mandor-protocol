@@ -1,4 +1,4 @@
-# Mandate Protocol — Threat Model (Phase 1)
+# Mandate Protocol: Threat Model (Phase 1)
 
 ## Platform-level risks
 
@@ -12,7 +12,7 @@
 | Human `PAUSER` too slow to react to a fast-moving attack | A separate, permissionless `checkAndAutoPause` path lets anyone trigger a pause the instant an objective condition (oracle deviation, drawdown speed) is true, independent of the human multisig |
 | Permissionless `checkAndAutoPause` never actually gets called in practice | Two layers, not one: a dedicated team-run watcher bot calls it proactively as the primary path, and a small capped bounty (`autoPauseBountyAmount`) rewards whoever's call successfully triggers a pause, so it stays worth calling even if the team's own bot is down |
 | Malicious or mispriced oracle swapped in via governance | Oracle feed switches require the new feed's price at switch time to be within a defined deviation of the previous feed's last known price, or the switch reverts |
-| Keeper service unavailable, confirmed decisions don't execute | Not a fund-safety risk (withdrawals never route through the keeper), but an availability risk — heartbeat + alerting on the keeper, alert if a confirmed decision sits unexecuted past a timeout |
+| Keeper service unavailable, confirmed decisions don't execute | Not a fund-safety risk (withdrawals never route through the keeper), but an availability risk, heartbeat + alerting on the keeper, alert if a confirmed decision sits unexecuted past a timeout |
 | A pushed transfer (e.g. the auto-pause bounty) fails because the recipient is a zero/blocklisted address, reverting a safety-critical action | Verified live: transfers to `address(0)` revert on both the native and ERC-20 interface with the same underlying reason. `checkAndAutoPause` flips `paused` before attempting the bounty payout and tolerates a failed payout (logs, doesn't revert) so a bad bounty transfer can never undo the pause. Ordinary withdrawals are pull-based (one user per transaction) and unaffected |
 
 ## Economic attack surface
@@ -20,13 +20,13 @@
 | Attack | Mitigation |
 |---|---|
 | ERC-4626 inflation attack | OZ's default virtual shares/assets offset (verify the pinned OZ version actually includes it) plus a protocol-owned minimum seed deposit, atomically deposited by `VaultFactory` in the same transaction that creates the vault |
-| USDC donation attack (Arc-specific, verified live) — native USDC and its ERC-20 interface share one balance, so anyone can inflate what `balanceOf(vault)` shows via a plain native transfer, any time, not just at first deposit | `MandateVault` never uses live `balanceOf(address(this))` for USDC share-price math; it tracks its own internal accounting ledger updated only through `deposit`/`withdraw`/`executeDecision`. Unsolicited transfers sit as unaccounted dust, never affecting share price |
+| USDC donation attack (Arc-specific, verified live), native USDC and its ERC-20 interface share one balance, so anyone can inflate what `balanceOf(vault)` shows via a plain native transfer, any time, not just at first deposit | `MandateVault` never uses live `balanceOf(address(this))` for USDC share-price math; it tracks its own internal accounting ledger updated only through `deposit`/`withdraw`/`executeDecision`. Unsolicited transfers sit as unaccounted dust, never affecting share price |
 | Oracle manipulation (flash loans / thin liquidity, worst for cirBTC/RWAs) | `oracleMaxStalenessSeconds` and `oracleMaxDeviationBps` are immutable fields in `VaultPolicy` itself; a stale or deviated price auto-rejects the decision and can trigger the per-vault pause; use Chainlink as primary source (verify Arc availability), median-of-sources where more than one feed exists. Feed **switches** (governance changing the address) are separately checked against the outgoing feed's last price, so a swap-in attack can't bypass this by pointing at a fresh, unvalidated feed |
 | NAV timing games | NAV computed over a short time window rather than an instantaneous block snapshot; a hard-capped, initially-zero entry/exit fee lever is reserved so it can be turned on without a redeploy |
 | MEV / front-running on rebalances | Transaction submission abstracted behind one seam so routing through a private mempool/relay later is a config change, not a rearchitecture (verify Arc's private-relay options exist) |
 | Reputation/leaderboard gaming | Out of scope until reputation exists (Phase 4), but `DecisionRecord` already captures per-decision drawdown/violation/anomaly data from Phase 1 onward, so Phase 4 scoring has the raw history it needs |
 
-## Agent-specific threats — in scope now (curator-only launch)
+## Agent-specific threats, in scope now (curator-only launch)
 
 | Threat | Mitigation |
 |---|---|
@@ -39,8 +39,8 @@
 
 | Item | Why | What keeps the door open anyway |
 |---|---|---|
-| Prompt injection via user-submitted strategy text | No user-authored strategy text exists — all vaults are team-curated | `systemPrompt.ts` never concatenates strategy config text into the system prompt; always a separate labeled block |
-| Sybil resistance for public agent creation | There is no public agent/vault creation feature. This is not a future phase — it was cut from the roadmap entirely | `strategyAuthor` stays a generic address/identifier field rather than a hardcoded team-only assumption, at no extra cost |
+| Prompt injection via user-submitted strategy text | No user-authored strategy text exists, all vaults are team-curated | `systemPrompt.ts` never concatenates strategy config text into the system prompt; always a separate labeled block |
+| Sybil resistance for public agent creation | There is no public agent/vault creation feature. This is not a future phase, it was cut from the roadmap entirely | `strategyAuthor` stays a generic address/identifier field rather than a hardcoded team-only assumption, at no extra cost |
 
 ## Withdrawal and liquidity mechanics
 
@@ -56,7 +56,7 @@ explicit case to define exact behavior for in Phase 2, not left implicit.
 
 New vaults start with low TVL limits, increasing progressively (e.g. 500,
 1,000, 5,000, 10,000) as reputation grows. There is a real maximum tier, or a
-human/governance review step once a vault crosses a significant threshold —
+human/governance review step once a vault crosses a significant threshold,
 never a fully unlimited tier reachable by reputation score alone. Mechanism
 lives in `CapitalLimitRegistry.sol` (Phase 4 for the actual scoring logic;
 Phase 1 only needs the contract shape and gate call site to exist).
@@ -72,7 +72,7 @@ level (Phase 4 rule; the versioning data model exists from Phase 1).
 
 **Migration between versions is manual by design.** A v1 -> v2 move is a
 withdraw from v1 plus a deposit into v2, two ordinary transactions, never an
-automated cross-vault migration function — an automated migration path would
+automated cross-vault migration function, an automated migration path would
 itself be a new cross-vault code path, cutting directly against vault
 isolation. The frontend guides both signatures as one flow; the deposit into
 v2 is ordinary enough that the reduced-trust-period rule above applies to it
@@ -84,7 +84,7 @@ automatically, so migrated capital never inherits v1's trust level. See
 Anthropic API key: server-side only, never in the frontend, never in the
 executor. Keeper signing key: isolated to `executor/keeperService.ts`, no
 other module imports it; for a solo/small-team pace, stored in the hosting
-provider's encrypted secret store, rotated periodically — a dedicated KMS/HSM
+provider's encrypted secret store, rotated periodically, a dedicated KMS/HSM
 or account-abstraction-based custody is a Phase 5 hardening goal, not a
 Phase 1 blocker. Ops confirmation credentials are a separate, ordinary human
 login, entirely distinct from the keeper key.
@@ -108,5 +108,5 @@ built out alongside Phase 2, not a Phase 1 blocker.
 Arc is positioned for institutional/regulated activity, and the Real World
 Assets category involves tokenized equities. Phase 1 reserves a no-op
 `ComplianceGate` interface hook and `requiresKYC`/`allowedRegions` metadata
-fields, without building real enforcement yet — retrofitting compliance hooks
+fields, without building real enforcement yet, retrofitting compliance hooks
 into a live protocol is far harder than reserving them from the start.
