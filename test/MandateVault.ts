@@ -194,10 +194,11 @@ describe("MandateVault", () => {
         router: router.address,
         tokenIn: usdc.address,
         tokenOut: eurc.address,
+        fee: 500,
         amountIn: swapAmount,
         minAmountOut: parseUnits("90", 6),
         deadline: ts + 3600n,
-        routerData: "0x",
+        sqrtPriceLimitX96: 0n,
       },
     ];
 
@@ -229,10 +230,11 @@ describe("MandateVault", () => {
         router: router.address,
         tokenIn: usdc.address,
         tokenOut: eurc.address,
+        fee: 500,
         amountIn: parseUnits("700", 18),
         minAmountOut: parseUnits("690", 6),
         deadline: ts + 3600n,
-        routerData: "0x",
+        sqrtPriceLimitX96: 0n,
       },
     ];
 

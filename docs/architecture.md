@@ -139,7 +139,27 @@ vice versa. Swaps execute atomically inside the vault itself
 an off-chain custody wallet like Vpay's `swapExecutor.ts`. This is the one
 place this design must go beyond Vpay's proven pattern: Vpay could accept a
 brief off-chain custody window because it never held pooled third-party
-funds; this protocol cannot accept that for vault capital. Withdrawals are
+funds; this protocol cannot accept that for vault capital.
+
+**The swap router interface is the real thing, not a placeholder.**
+`ISwapRouter.sol` adopts the standard Uniswap V3 `exactInputSingle` ABI
+directly, because a real, deployed, verified router genuinely exists on Arc
+Testnet: "UnitFlowV3Router" by ACTFUN (a token launchpad), third-party
+standard-Uniswap-V3-compatible infrastructure, explicitly NOT the official
+Uniswap Labs deployment announced as an Arc ecosystem partner (that one
+still has no publicly documented address). Verified independently, not
+trusted secondhand: real deployed bytecode, verified source on Arcscan
+matching the standard Uniswap V3 file structure, `Router.factory()`
+returning the exact known Factory address, and a real pool with real
+liquidity found via the Factory's own `PoolCreated` events. See
+`docs/arc-facts-to-verify.md` for full details and addresses.
+`test/MandateVaultArcFork.t.sol` runs the full atomic swap plus policy
+validation flow against this real router and real pool on a fork of Arc
+Testnet, not just the mock (`contracts/test/MockSwapRouter.sol`, which
+implements the same real interface so unit tests exercise the exact call
+shape used against the real router).
+
+Withdrawals are
 never pausable, same rule as above.
 
 **USDC donation attack, verified live on Arc testnet, distinct from the

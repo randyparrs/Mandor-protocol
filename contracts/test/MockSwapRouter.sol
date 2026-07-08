@@ -6,11 +6,11 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ISwapRouter} from "../interfaces/ISwapRouter.sol";
 
-/// @notice Test-only stand-in for a real on-chain DEX router (Uniswap-V3 or
-/// Curve style, address/ABI not yet verified on Arc Testnet, see
-/// docs/arc-facts-to-verify.md). Configurable exchange rate and failure
-/// modes, mirroring MockVault.sol's existing pattern. Not part of the real
-/// protocol.
+/// @notice Test-only stand-in implementing the same real interface as the
+/// verified UnitFlowV3Router on Arc Testnet (see ISwapRouter.sol), so unit
+/// tests exercise the exact call shape MandateVault uses against the real
+/// router, only the router address differs between mock and real. Not part
+/// of the real protocol.
 contract MockSwapRouter is ISwapRouter {
     using SafeERC20 for IERC20;
 
@@ -19,6 +19,11 @@ contract MockSwapRouter is ISwapRouter {
     uint256 public rateBps = 10_000;
     bool public shouldRevert;
     bool public shouldShortOutput;
+    address public immutable mockFactory;
+
+    constructor() {
+        mockFactory = address(this);
+    }
 
     function setRateBps(uint256 value) external {
         rateBps = value;
@@ -32,31 +37,31 @@ contract MockSwapRouter is ISwapRouter {
         shouldShortOutput = value;
     }
 
-    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, uint256, bytes calldata)
-        external
-        override
-        returns (uint256 amountOut)
-    {
+    function factory() external view override returns (address) {
+        return mockFactory;
+    }
+
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable override returns (uint256 amountOut) {
         if (shouldRevert) revert("mock router: swap failed");
 
-        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
 
         // rateBps is a VALUE ratio (10_000 = 1:1 by value), not a raw unit
         // ratio, so this adjusts for tokenIn/tokenOut having different
         // decimals (e.g. 18-decimal USDC swapped for 6-decimal EURC).
-        uint8 decimalsIn = IERC20Metadata(tokenIn).decimals();
-        uint8 decimalsOut = IERC20Metadata(tokenOut).decimals();
-        amountOut = (amountIn * rateBps) / 10_000;
+        uint8 decimalsIn = IERC20Metadata(params.tokenIn).decimals();
+        uint8 decimalsOut = IERC20Metadata(params.tokenOut).decimals();
+        amountOut = (params.amountIn * rateBps) / 10_000;
         if (decimalsOut > decimalsIn) {
             amountOut = amountOut * (10 ** (decimalsOut - decimalsIn));
         } else if (decimalsIn > decimalsOut) {
             amountOut = amountOut / (10 ** (decimalsIn - decimalsOut));
         }
         if (shouldShortOutput) {
-            amountOut = minAmountOut > 0 ? minAmountOut - 1 : 0;
+            amountOut = params.amountOutMinimum > 0 ? params.amountOutMinimum - 1 : 0;
         }
 
-        IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
+        IERC20(params.tokenOut).safeTransfer(params.recipient, amountOut);
         return amountOut;
     }
 

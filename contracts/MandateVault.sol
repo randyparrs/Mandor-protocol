@@ -60,14 +60,20 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
 
     uint8 private constant DECIMALS_OFFSET = 3;
 
+    /// @dev Mirrors ISwapRouter.ExactInputSingleParams directly (fee,
+    /// sqrtPriceLimitX96 included) rather than an opaque bytes blob, since
+    /// the real router this targets (UnitFlowV3Router on Arc Testnet, see
+    /// ISwapRouter.sol) is a verified, standard Uniswap V3 fork with a known
+    /// ABI, not a hypothetical one anymore.
     struct SwapLeg {
         address router;
         address tokenIn;
         address tokenOut;
+        uint24 fee;
         uint256 amountIn;
         uint256 minAmountOut;
         uint256 deadline;
-        bytes routerData;
+        uint160 sqrtPriceLimitX96;
     }
 
     event PolicySet(address indexed policy);
@@ -259,8 +265,17 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
         if (!isRegisteredAsset[leg.tokenIn] || !isRegisteredAsset[leg.tokenOut]) revert UnregisteredAsset(leg.tokenIn);
 
         IERC20(leg.tokenIn).forceApprove(leg.router, leg.amountIn);
-        uint256 amountOut = ISwapRouter(leg.router).swap(
-            leg.tokenIn, leg.tokenOut, leg.amountIn, leg.minAmountOut, leg.deadline, leg.routerData
+        uint256 amountOut = ISwapRouter(leg.router).exactInputSingle(
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn: leg.tokenIn,
+                tokenOut: leg.tokenOut,
+                fee: leg.fee,
+                recipient: address(this),
+                deadline: leg.deadline,
+                amountIn: leg.amountIn,
+                amountOutMinimum: leg.minAmountOut,
+                sqrtPriceLimitX96: leg.sqrtPriceLimitX96
+            })
         );
         IERC20(leg.tokenIn).forceApprove(leg.router, 0);
 

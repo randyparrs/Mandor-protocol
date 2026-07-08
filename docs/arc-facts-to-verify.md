@@ -14,11 +14,6 @@ facts.
 - [ ] Whether the OpenZeppelin `ERC4626` version ultimately pinned in `package.json`
       includes the default virtual-shares offset, verify the specific version,
       don't assume
-- [ ] Real Uniswap-V3-compatible or Curve-compatible router addresses and ABIs
-      on Arc Testnet. `MandateVault.sol`'s `executeDecision` swaps through an
-      allowlisted `ISwapRouter`, built and tested against a mock
-      (`contracts/test/MockSwapRouter.sol`) this round, not wired to a real
-      router yet.
 
 ## Verified (checked live against Arc testnet, not just docs)
 
@@ -32,6 +27,27 @@ facts.
 - [x] Transfers to `address(0)` revert on both the native and ERC-20 interface,
       with the same underlying reason (`"Zero address not allowed"`), confirmed
       via live `eth_call` simulation on both paths.
+- [x] A real, deployed, verified Uniswap-V3-compatible router exists on Arc
+      Testnet: **"UnitFlowV3Router" by ACTFUN** (a token launchpad), NOT the
+      official Uniswap Labs deployment announced as an Arc ecosystem partner
+      (that one still has no publicly documented address). Router
+      `0x509cF58CdA08C7aee83a2BdBb4A1Eac907343D01`, Factory
+      `0xAb6A8AAb7d490007634ef59d424b5d89688a1971`, Quoter
+      `0x121aeB6DEf00F6F67665008CaC1C19805886ed1a`. Verified independently,
+      not just trusted secondhand: all three have real deployed bytecode
+      (`eth_getCode`), all three are marked verified on Arcscan with source
+      matching the standard Uniswap V3 periphery/core file structure exactly
+      (renamed), `Router.factory()` returns the exact known Factory address
+      (confirming real cross-wiring, not just independently-deployed
+      look-alikes), and a real pool with real, non-zero liquidity was found
+      by reading the Factory's own `PoolCreated` events (WUSDC / "SAM", fee
+      3000, pool `0xf8181Ce99783943B7c67467789984a68e8AeaD5d`). `ISwapRouter.sol`
+      and `MandateVault.sol`'s `SwapLeg` struct now match this router's real
+      ABI (`exactInputSingle`) directly, no longer a generic invented
+      interface. `test/MandateVaultArcFork.t.sol` runs the full atomic swap
+      plus policy validation flow against this real router and real pool on
+      a fork of Arc Testnet, not a mock.
+
 ## Blocking, must be resolved before Phase 2 is considered fully closed
 
 - [ ] **Blocklisted-address transfer behavior, not yet verified.** Confirm
