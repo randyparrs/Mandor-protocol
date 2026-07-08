@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "devDependencies": {
+    "@nomicfoundation/hardhat-foundry": "^3.0.4",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
     "hardhat": "^3.9.0",
     "viem": "^2.53.1"

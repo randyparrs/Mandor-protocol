@@ -1,8 +1,9 @@
 import { defineConfig, configVariable } from "hardhat/config";
 import hardhatToolboxViem from "@nomicfoundation/hardhat-toolbox-viem";
+import hardhatFoundry from "@nomicfoundation/hardhat-foundry";
 
 export default defineConfig({
-  plugins: [hardhatToolboxViem],
+  plugins: [hardhatToolboxViem, hardhatFoundry],
   solidity: "0.8.28",
   networks: {
     arcTestnet: {
