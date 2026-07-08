@@ -1,0 +1,6 @@
+node_modules/
+artifacts/
+cache/
+forge-out/
+forge-cache/
+.env
