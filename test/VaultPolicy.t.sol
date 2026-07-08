@@ -111,6 +111,140 @@ contract VaultPolicyTest is Test {
         assertFalse(passed, "a decision must never pass while drawdown exceeds the immutable limit");
     }
 
+    /// @dev No non-HOLD action ever passes once tradesToday has reached the
+    /// immutable maxTradesPerDay, no matter how large tradesToday gets.
+    function testFuzz_neverPassesWhenTradesPerDayExceeded(uint256 tradesToday) public view {
+        tradesToday = bound(tradesToday, 5, type(uint256).max); // maxTradesPerDay = 5
+
+        IVaultPolicy.AssetHolding[] memory holdings = new IVaultPolicy.AssetHolding[](1);
+        holdings[0] = IVaultPolicy.AssetHolding({asset: USDC, currentAllocationBps: 10_000});
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: tradesToday,
+            currentHoldings: holdings,
+            prices: new IVaultPolicy.AssetPrice[](0)
+        });
+
+        (bool passed,) = policy.validateDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.ENTER,
+                asset: USDC,
+                amount: 1,
+                targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            }),
+            state
+        );
+
+        assertFalse(passed, "a trade action must never pass once tradesToday reaches the immutable daily cap");
+    }
+
+    /// @dev No decision ever passes while the stable-asset weight is below
+    /// the immutable minStableAllocationBps, regardless of how the
+    /// remaining allocation is otherwise arranged.
+    function testFuzz_neverPassesWhenStableAllocationBelowMinimum(uint16 stableBps) public view {
+        stableBps = uint16(bound(stableBps, 0, uint16(MIN_STABLE_BPS) - 1));
+        // EURC held well within its own 5000 bps cap on purpose, so this
+        // test isolates the min-stable check from the max-allocation check
+        // above — holdings need not sum to 10000, VaultPolicy only checks
+        // each asset against its own cap and sums the stable ones.
+        uint16 nonStableBps = 1000;
+
+        IVaultPolicy.AssetHolding[] memory holdings = new IVaultPolicy.AssetHolding[](2);
+        holdings[0] = IVaultPolicy.AssetHolding({asset: USDC, currentAllocationBps: stableBps});
+        holdings[1] = IVaultPolicy.AssetHolding({asset: EURC, currentAllocationBps: nonStableBps});
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: holdings,
+            prices: new IVaultPolicy.AssetPrice[](0)
+        });
+
+        (bool passed,) = policy.validateDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.REBALANCE,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            }),
+            state
+        );
+
+        assertFalse(passed, "a decision must never pass while stable allocation is below the immutable minimum");
+    }
+
+    /// @dev No decision ever passes when a supplied price is older than the
+    /// immutable oracleMaxStalenessSeconds.
+    function testFuzz_neverPassesWhenOracleStale(uint256 staleness) public {
+        staleness = bound(staleness, 3601, 365 days); // oracleMaxStalenessSeconds = 3600
+
+        vm.warp(365 days); // headroom so updatedAt below never underflows
+        IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](1);
+        prices[0] = IVaultPolicy.AssetPrice({
+            asset: USDC,
+            price: 100,
+            referencePrice: 100,
+            updatedAt: block.timestamp - staleness
+        });
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: new IVaultPolicy.AssetHolding[](0),
+            prices: prices
+        });
+
+        (bool passed,) = policy.validateDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.HOLD,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            }),
+            state
+        );
+
+        assertFalse(passed, "a decision must never pass on a price staler than the immutable staleness limit");
+    }
+
+    /// @dev No decision ever passes when a supplied price deviates from its
+    /// reference by more than the immutable oracleMaxDeviationBps.
+    function testFuzz_neverPassesWhenOracleDeviationExceeded(uint256 referencePrice, uint256 deviationBps) public
+        view
+    {
+        referencePrice = bound(referencePrice, 1, 1e30); // avoid overflow in price computation below
+        deviationBps = bound(deviationBps, 501, 10_000); // oracleMaxDeviationBps = 500
+        uint256 price = referencePrice + (referencePrice * deviationBps) / 10_000;
+
+        IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](1);
+        prices[0] =
+            IVaultPolicy.AssetPrice({asset: USDC, price: price, referencePrice: referencePrice, updatedAt: block.timestamp});
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: new IVaultPolicy.AssetHolding[](0),
+            prices: prices
+        });
+
+        (bool passed,) = policy.validateDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.HOLD,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            }),
+            state
+        );
+
+        assertFalse(passed, "a decision must never pass when price deviation exceeds the immutable limit");
+    }
+
     /// @dev EMERGENCY_EXIT_TO_STABLE always passes regardless of how bad
     /// currentDrawdownBps is — the safety valve is unconditional, by design.
     function testFuzz_emergencyExitAlwaysPassesRegardlessOfDrawdown(uint16 drawdownBps) public view {

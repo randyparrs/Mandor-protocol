@@ -36,8 +36,19 @@ contract VaultPolicy is IVaultPolicy {
     uint256 public immutable maxDrawdownBps;
     uint256 public immutable maxTradesPerDay;
     uint256 public immutable minStableAllocationBps;
+
+    /// @dev Two genuinely different things, do not conflate them:
+    /// - The THRESHOLDS below (how much staleness/deviation is tolerated)
+    ///   are immutable, exactly like every other limit in this contract.
+    ///   There is no setter for either, ever, on a live policy.
+    /// - The oracle FEED ADDRESS (which price source to read) is NOT stored
+    ///   here at all. It is owned by a separate, future OracleRegistry.sol,
+    ///   deliberately kept out of VaultPolicy so this contract's only
+    ///   mutable field remains `paused`. See docs/architecture.md, "Where
+    ///   the current feed address actually lives."
     uint256 public immutable oracleMaxStalenessSeconds;
     uint256 public immutable oracleMaxDeviationBps;
+
     uint256 public immutable maxDrawdownSpeedBpsPerWindow;
     uint256 public immutable drawdownSpeedWindowSeconds;
     uint256 public immutable autoPauseBountyAmount;
@@ -183,6 +194,17 @@ contract VaultPolicy is IVaultPolicy {
     /// expire(). Only actually pauses if an objective condition is true.
     /// Pays autoPauseBountyAmount to whoever's call triggers the pause, so
     /// the mechanism stays real even if the team's own watcher bot is down.
+    /// @dev No ReentrancyGuard here, deliberately, not an oversight: this
+    /// contract never holds funds, so there is nothing here for a
+    /// reentrant call to drain. The only state this function mutates is
+    /// `paused`, and that is set BEFORE the external call (checks-effects-
+    /// interactions), so even a malicious recipient that reenters
+    /// checkAndAutoPause during the payout hits `require(!paused)` and
+    /// reverts immediately — that reverts only the reentrant attempt,
+    /// which the outer call's try/catch simply records as a failed payout,
+    /// exactly like any other payout failure. The actual token transfer
+    /// happens inside MandateVault.payAutoPauseBounty, which DOES hold
+    /// funds and is responsible for its own reentrancy protection there.
     function checkAndAutoPause(VaultState calldata state) external returns (bool triggered, bytes32 code) {
         require(!paused, "already paused");
         (triggered, code) = _evaluateAutoPause(state);
