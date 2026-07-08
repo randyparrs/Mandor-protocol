@@ -14,6 +14,11 @@ facts.
 - [ ] Whether the OpenZeppelin `ERC4626` version ultimately pinned in `package.json`
       includes the default virtual-shares offset, verify the specific version,
       don't assume
+- [ ] Real Uniswap-V3-compatible or Curve-compatible router addresses and ABIs
+      on Arc Testnet. `MandateVault.sol`'s `executeDecision` swaps through an
+      allowlisted `ISwapRouter`, built and tested against a mock
+      (`contracts/test/MockSwapRouter.sol`) this round, not wired to a real
+      router yet.
 
 ## Verified (checked live against Arc testnet, not just docs)
 
