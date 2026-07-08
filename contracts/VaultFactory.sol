@@ -64,10 +64,13 @@ contract VaultFactory {
         if (params.seedAmount == 0) revert ZeroSeedAmount();
         if (protocolTreasury == address(0)) revert ZeroTreasury();
 
+        // vaultDeployer.deploy reverts for any caller other than this
+        // contract's own address (set once via vaultDeployer.setFactory
+        // right after deployment), so the resulting vault's factory field
+        // is guaranteed to be this real, known VaultFactory, never
+        // spoofable by a third party calling the deployer directly.
         MandateVault v = MandateVault(
-            vaultDeployer.deploy(
-                params.usdc, roles, params.initialSwapRouter, params.name, params.symbol, params.otherAssets, address(this)
-            )
+            vaultDeployer.deploy(params.usdc, roles, params.initialSwapRouter, params.name, params.symbol, params.otherAssets)
         );
 
         params.limits.vault = address(v);

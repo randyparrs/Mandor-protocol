@@ -40,6 +40,7 @@ async function setup() {
   const vaultDeployer = await viem.deployContract("MandateVaultDeployer");
 
   const factory = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer.address]);
+  await vaultDeployer.write.setFactory([factory.address]);
 
   await usdc.write.mint([admin.account.address, parseUnits("10000", 18)]);
   await usdc.write.approve([factory.address, parseUnits("10000", 18)], { account: admin.account });
@@ -59,6 +60,44 @@ function createParams(over: Record<string, unknown> = {}) {
     ...over,
   };
 }
+
+describe("MandateVaultDeployer", () => {
+  it("deploy reverts for any caller other than the real, wired VaultFactory", async () => {
+    const { viem, roles, usdc, router, other } = await setup();
+    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    // deliberately never call setFactory, so factory() is still address(0);
+    // confirm a direct call from an arbitrary address reverts. Note deploy
+    // no longer takes a `factory` parameter at all (the earlier, broken
+    // version did) -- it is checked only against msg.sender, so there is
+    // no parameter left to spoof.
+    await assert.rejects(
+      freshDeployer.write.deploy(
+        [usdc.address, roles.address, router.address, "Rogue Vault", "rUSDC", []],
+        { account: other.account },
+      ),
+    );
+  });
+
+  it("deploy reverts for any caller other than the real factory, even once a real factory is wired", async () => {
+    const { viem, factory, usdc, roles, router, other } = await setup();
+    const deployerAddr = await factory.read.vaultDeployer();
+    const deployer = await viem.getContractAt("MandateVaultDeployer", deployerAddr);
+    await assert.rejects(
+      deployer.write.deploy([usdc.address, roles.address, router.address, "Rogue Vault", "rUSDC", []], {
+        account: other.account,
+      }),
+    );
+  });
+
+  it("setFactory can only be called once, only by whoever deployed the deployer", async () => {
+    const { viem, other } = await setup();
+    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    await assert.rejects(freshDeployer.write.setFactory([other.account.address], { account: other.account }));
+
+    await freshDeployer.write.setFactory([other.account.address]);
+    await assert.rejects(freshDeployer.write.setFactory([other.account.address]));
+  });
+});
 
 describe("VaultFactory", () => {
   it("only ADMIN_ROLE can call createVault", async () => {
@@ -109,13 +148,19 @@ describe("VaultFactory", () => {
   });
 
   it("reverts if the caller has not approved sufficient USDC allowance", async () => {
-    const { viem, roles, treasury, usdc, router, vaultDeployer } = await setup();
+    const { viem, roles, treasury, usdc, router } = await setup();
     const [, , , unapproved] = await viem.getWalletClients();
     await roles.write.grantRole([ADMIN_ROLE, unapproved.account.address]);
     await usdc.write.mint([unapproved.account.address, parseUnits("1000", 18)]);
     // deliberately no approve() call
 
-    const factory2 = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer.address]);
+    // Fresh deployer, so this factory (not the one from setup()) is the
+    // one actually wired to call it, and the revert we're testing for
+    // (insufficient allowance) is the real cause, not a mismatched deployer.
+    const vaultDeployer2 = await viem.deployContract("MandateVaultDeployer");
+    const factory2 = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer2.address]);
+    await vaultDeployer2.write.setFactory([factory2.address]);
+
     const params = createParams({ usdc: usdc.address, initialSwapRouter: router.address });
     await assert.rejects(factory2.write.createVault([params], { account: unapproved.account }));
   });

@@ -227,6 +227,34 @@ immutable per instance (a new strategy version is a new Vault+Policy pair, not
 an upgrade). `VaultRegistry` a simple mutable append-only registry, owned by
 `ADMIN`. `CapitalLimitRegistry` mutable, `GOVERNANCE` + timelock only.
 
+**Real deployment sequence, discovered while implementing `VaultFactory`
+(not part of the original plan, added here so it is not lost).**
+`VaultFactory` deploying both `MandateVault` and `VaultPolicy` directly via
+`new` pushed its own bytecode past the EIP-170 24576-byte contract size
+limit (Solidity embeds a contract's full creation code into anything that
+instantiates it), so `MandateVault`'s creation is split into a dedicated
+`MandateVaultDeployer.sol`. That contract has its own circular-dependency
+problem, the same shape as `MandateVault`/`VaultPolicy`'s: it must exist
+before `VaultFactory` (which takes its address as a constructor argument),
+so it cannot take `VaultFactory`'s address as a constructor argument either.
+Resolved the same way, with one more step:
+1. Deploy `MandateVaultDeployer`.
+2. Deploy `VaultFactory`, passing in step 1's address.
+3. Call `MandateVaultDeployer.setFactory(address(vaultFactory))`, exactly
+   once, restricted to whoever deployed `MandateVaultDeployer` in step 1.
+
+An earlier version of `MandateVaultDeployer.deploy` took the factory address
+as a plain parameter with no restriction at all, reasoning that a directly-
+deployed rogue vault would just be unregistered in `VaultFactory`'s own
+`isMandateVault` mapping. That reasoning was incomplete: anyone could call
+`deploy` directly and pass in the real, legitimate `VaultFactory`'s address,
+producing a vault whose immutable `factory` field genuinely reads as the
+real, known `VaultFactory`, despite never having gone through it. Any future
+code trusting that field directly instead of checking the registry would be
+fooled. Fixed at the source: `deploy` now takes no `factory` parameter at
+all, it only ever uses `msg.sender`, checked against the one-shot `factory`
+address set in step 3 above.
+
 **Capital migration v1 -> v2 is manual withdraw + redeposit, by design, not an
 oversight.** Since each strategy version is a genuinely separate Vault+Policy
 pair (deliberately, so a v2 bug can never reach v1's funds), an automated

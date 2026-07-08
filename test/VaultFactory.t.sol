@@ -30,6 +30,7 @@ contract VaultFactoryTest is Test {
         vaultDeployer = new MandateVaultDeployer();
 
         factory = new VaultFactory(address(roles), treasury, vaultDeployer);
+        vaultDeployer.setFactory(address(factory));
 
         usdc.mint(address(this), 1_000_000e18);
         usdc.approve(address(factory), type(uint256).max);
@@ -83,6 +84,17 @@ contract VaultFactoryTest is Test {
         vm.prank(caller);
         vm.expectRevert();
         factory.createVault(_params(100e18));
+    }
+
+    /// @dev MandateVaultDeployer.deploy must reject every caller except the
+    /// real, wired VaultFactory, with no parameter left for an attacker to
+    /// spoof their way past that check.
+    function testFuzz_vaultDeployerRejectsAnyCallerOtherThanFactory(address caller) public {
+        vm.assume(caller != address(factory));
+        address[] memory otherAssets = new address[](0);
+        vm.prank(caller);
+        vm.expectRevert();
+        vaultDeployer.deploy(IERC20(address(usdc)), address(roles), address(router), "Rogue Vault", "rUSDC", otherAssets);
     }
 
     /// @dev No matter the seed amount, there is never a window where the
