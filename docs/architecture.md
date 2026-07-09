@@ -297,6 +297,18 @@ pattern already used for `checkAndAutoPause` and `P2PMarket.sol`'s
 to adding and removing a router; removing one is not treated as urgent
 enough to skip the delay.
 
+**A 48h delay only protects against a compromised or mistaken GOVERNANCE
+key if someone can actually act during that window, not just wait it out.**
+`cancelRouterAllowedChange` is gated to `PAUSER_ROLE`, deliberately a
+different role than the `GOVERNANCE_ROLE` that proposes, so a malicious
+proposal pushed through with a briefly compromised `GOVERNANCE` key can
+still be stopped by the team or automated monitoring during the delay,
+not just observed while it counts down. Cancelling reverts if there is no
+pending change for that router, rather than silently no-op-ing. This is the
+same reasoning already applied to `PAUSER`'s role elsewhere: fast defensive
+reaction is a distinct responsibility from the role that proposes changes in
+the first place.
+
 **Oracle feed switches are validated against the outgoing feed's last price.**
 An oracle address change is a historically common DeFi attack vector (swap in
 a malicious or mispriced feed, then immediately exploit the gap). `GOVERNANCE`

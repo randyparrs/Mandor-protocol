@@ -376,4 +376,49 @@ contract MandateVaultTest is Test {
         vault.executeRouterAllowed(address(router));
         assertTrue(vault.allowedRouters(address(router)), "removal must never take effect before the timelock elapses");
     }
+
+    /// @dev A 48h delay only protects against a compromised GOVERNANCE key
+    /// if someone can actually act during the window. PAUSER_ROLE, a
+    /// different role than the GOVERNANCE_ROLE that proposes, must be able
+    /// to cancel a pending change at any point before it executes, and the
+    /// cancelled proposal must then be permanently unexecutable, not just
+    /// delayed further.
+    function testFuzz_pauserCanCancelPendingRouterChangeAtAnyPointBeforeExecution(address candidateRouter, uint256 elapsed) public {
+        vm.assume(candidateRouter != address(router));
+        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() * 10);
+
+        vault.proposeRouterAllowed(candidateRouter, true);
+        vm.warp(block.timestamp + elapsed);
+
+        vault.cancelRouterAllowedChange(candidateRouter);
+        assertEq(vault.routerChangeExecutableAt(candidateRouter), 0);
+        assertFalse(vault.pendingRouterChange(candidateRouter));
+
+        vm.expectRevert();
+        vault.executeRouterAllowed(candidateRouter);
+        assertFalse(vault.allowedRouters(candidateRouter), "a cancelled proposal must never take effect, timelock or not");
+    }
+
+    /// @dev Only PAUSER_ROLE can cancel, not GOVERNANCE (the same role that
+    /// proposed) and not an arbitrary caller, otherwise cancellation would
+    /// be no real check on a compromised GOVERNANCE key.
+    function testFuzz_onlyPauserCanCancelRouterChange(address caller) public {
+        vm.assume(caller != address(this));
+        vault.proposeRouterAllowed(address(router), false);
+
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.cancelRouterAllowedChange(address(router));
+    }
+
+    /// @dev Cancelling a router with no pending change reverts rather than
+    /// silently no-op-ing, so a PAUSER call against the wrong address fails
+    /// loudly instead of giving false confidence that something was stopped.
+    function testFuzz_cancellingRouterWithNoPendingChangeReverts(address candidateRouter) public {
+        vm.assume(candidateRouter != address(0));
+        assertEq(vault.routerChangeExecutableAt(candidateRouter), 0, "sanity: nothing pending yet");
+
+        vm.expectRevert();
+        vault.cancelRouterAllowedChange(candidateRouter);
+    }
 }

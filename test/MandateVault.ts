@@ -355,4 +355,32 @@ describe("MandateVault", () => {
     await vault.write.executeRouterAllowed([candidateRouter.address], { account: other.account });
     assert.equal(await vault.read.allowedRouters([candidateRouter.address]), true);
   });
+
+  it("PAUSER_ROLE can cancel a pending router change before it executes, stopping a malicious proposal during the delay", async () => {
+    const { vault, governance, pauser, other, viem } = await setup();
+    const candidateRouter = await viem.deployContract("MockSwapRouter");
+
+    await vault.write.proposeRouterAllowed([candidateRouter.address, true], { account: governance.account });
+    assert.notEqual(await vault.read.routerChangeExecutableAt([candidateRouter.address]), 0n);
+
+    await vault.write.cancelRouterAllowedChange([candidateRouter.address], { account: pauser.account });
+    assert.equal(await vault.read.routerChangeExecutableAt([candidateRouter.address]), 0n);
+    assert.equal(await vault.read.pendingRouterChange([candidateRouter.address]), false);
+
+    // Once cancelled, there is nothing left to execute, timelock or not.
+    await assert.rejects(vault.write.executeRouterAllowed([candidateRouter.address], { account: other.account }));
+    assert.equal(await vault.read.allowedRouters([candidateRouter.address]), false);
+  });
+
+  it("only PAUSER_ROLE can cancel a pending router change, and cancelling with nothing pending reverts", async () => {
+    const { vault, governance, other, pauser, viem } = await setup();
+    const candidateRouter = await viem.deployContract("MockSwapRouter");
+    await vault.write.proposeRouterAllowed([candidateRouter.address, true], { account: governance.account });
+
+    await assert.rejects(vault.write.cancelRouterAllowedChange([candidateRouter.address], { account: governance.account }));
+    await assert.rejects(vault.write.cancelRouterAllowedChange([candidateRouter.address], { account: other.account }));
+
+    const neverProposedRouter = await viem.deployContract("MockSwapRouter");
+    await assert.rejects(vault.write.cancelRouterAllowedChange([neverProposedRouter.address], { account: pauser.account }));
+  });
 });

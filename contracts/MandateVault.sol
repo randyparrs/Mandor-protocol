@@ -21,6 +21,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
 
     bytes32 private constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     bytes32 private constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
+    bytes32 private constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     address public immutable factory;
     address public immutable roles;
@@ -109,6 +110,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     event SwapExecuted(address indexed router, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
     event RouterAllowedSet(address indexed router, bool allowed);
     event RouterChangeProposed(address indexed router, bool allowed, uint256 executableAt);
+    event RouterChangeCancelled(address indexed router, address indexed cancelledBy);
     event CapitalLimitRegistrySet(address indexed registry);
     event DustSwept(address indexed asset, address indexed to, uint256 amount);
     event AutoPauseBountyAmountSet(uint256 amount);
@@ -118,6 +120,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     error NotFactory();
     error NotKeeper();
     error NotGovernance();
+    error NotPauser();
     error NotPolicy();
     error PolicyNotSet();
     error DecisionRejected(bytes32[] codes);
@@ -127,6 +130,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     error NoDust();
     error BountyAmountExceedsCap(uint256 amount, uint256 cap);
     error RouterChangeNotReady(uint256 executableAt);
+    error NoPendingRouterChange(address router);
 
     modifier onlyFactory() {
         if (msg.sender != factory) revert NotFactory();
@@ -140,6 +144,11 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
 
     modifier onlyGovernance() {
         if (!IAccessControl(roles).hasRole(GOVERNANCE_ROLE, msg.sender)) revert NotGovernance();
+        _;
+    }
+
+    modifier onlyPauser() {
+        if (!IAccessControl(roles).hasRole(PAUSER_ROLE, msg.sender)) revert NotPauser();
         _;
     }
 
@@ -459,6 +468,20 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
         delete routerChangeExecutableAt[router];
         delete pendingRouterChange[router];
         emit RouterAllowedSet(router, allowed);
+    }
+
+    /// @notice A 48h delay only protects against a compromised GOVERNANCE
+    /// key if someone can actually act during that window, not just watch
+    /// the attack land on a timer. Gated to PAUSER_ROLE, deliberately a
+    /// different role than the GOVERNANCE_ROLE that proposes, so a proposal
+    /// pushed through with a briefly compromised GOVERNANCE key can still be
+    /// stopped by the team/monitoring during the delay. Reverts if there is
+    /// no pending change for this router, rather than silently no-op-ing.
+    function cancelRouterAllowedChange(address router) external onlyPauser {
+        if (routerChangeExecutableAt[router] == 0) revert NoPendingRouterChange(router);
+        delete routerChangeExecutableAt[router];
+        delete pendingRouterChange[router];
+        emit RouterChangeCancelled(router, msg.sender);
     }
 
     function setCapitalLimitRegistry(address registry) external onlyGovernance {
