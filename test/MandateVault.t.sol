@@ -211,13 +211,16 @@ contract MandateVaultTest is Test {
     /// @dev The vault decides the amount itself (its own current
     /// autoPauseBountyAmount, GOVERNANCE-adjustable), there is no
     /// caller-supplied figure to spoof anymore, this is the whole point of
-    /// removing that parameter. Whatever the current configured amount is,
-    /// a real payout must move exactly that much, no more, no less.
+    /// removing that parameter. When the configured amount is comfortably
+    /// within both hard caps, a real payout moves exactly that much, no
+    /// more, no less. The caps binding is covered separately below.
     function testFuzz_payoutAlwaysMovesExactlyTheCurrentConfiguredAmount(uint256 depositAmount, uint256 bountyAmount)
         public
     {
-        bountyAmount = bound(bountyAmount, 1, 1e21);
-        depositAmount = bound(depositAmount, bountyAmount, 1e30);
+        bountyAmount = bound(bountyAmount, 1, vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        // Deposit large enough that 1% of TVL is never the binding
+        // constraint, isolating the "no cap involved" case.
+        depositAmount = bound(depositAmount, bountyAmount * 100, 1e33);
         vault.setAutoPauseBountyAmount(bountyAmount);
         _deposit(user1, depositAmount);
 
@@ -227,6 +230,50 @@ contract MandateVaultTest is Test {
 
         assertEq(vault.ledgerOf(address(usdc)), ledgerBefore - bountyAmount);
         assertEq(usdc.balanceOf(user1), bountyAmount);
+    }
+
+    /// @dev Even if GOVERNANCE sets autoPauseBountyAmount right at the
+    /// absolute maximum, a payout on a small vault is still capped at 1% of
+    /// its current TVL, never the full configured amount, proving the
+    /// percent-of-TVL cap is the one that actually binds on small vaults.
+    function testFuzz_payoutCappedByPercentOfTVLOnSmallVaults(uint256 depositAmount) public {
+        depositAmount = bound(depositAmount, 1e18, 1e20); // small vault, 1-100 USDC
+        vault.setAutoPauseBountyAmount(vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        _deposit(user1, depositAmount);
+
+        uint256 expectedCap = (depositAmount * vault.MAX_AUTO_PAUSE_BOUNTY_BPS()) / 10_000;
+        vm.prank(address(policy));
+        vault.payAutoPauseBounty(user1);
+
+        assertEq(usdc.balanceOf(user1), expectedCap, "payout must be capped at 1% of current TVL, not the full configured amount");
+        assertLt(usdc.balanceOf(user1), vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE(), "sanity: the percent cap must be the binding one here");
+    }
+
+    /// @dev On a very large vault, 1% of TVL would exceed the absolute
+    /// ceiling, so the fixed MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE must be the one
+    /// that binds instead. Even a compromised or mistaken GOVERNANCE can
+    /// never push a single payout past this fixed number, no matter how
+    /// large the vault or the configured amount.
+    function testFuzz_payoutCappedByAbsoluteMaximumOnLargeVaults(uint256 depositAmount) public {
+        depositAmount = bound(depositAmount, 1_000_000e18, 1e33); // large vault
+        vm.assume((depositAmount * vault.MAX_AUTO_PAUSE_BOUNTY_BPS()) / 10_000 > vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+
+        vault.setAutoPauseBountyAmount(vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        _deposit(user1, depositAmount);
+
+        vm.prank(address(policy));
+        vault.payAutoPauseBounty(user1);
+
+        assertEq(usdc.balanceOf(user1), vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+    }
+
+    function test_setAutoPauseBountyAmountRejectsAboveAbsoluteCap() public {
+        // Computed before arming expectRevert, otherwise this view call
+        // itself (evaluated first, to build the argument below) is the one
+        // "next call" gets attached to, not the actual setter call.
+        uint256 tooMuch = vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE() + 1;
+        vm.expectRevert();
+        vault.setAutoPauseBountyAmount(tooMuch);
     }
 
     /// @dev A bounty amount of 0 (the default until GOVERNANCE opts in) is
@@ -275,5 +322,58 @@ contract MandateVaultTest is Test {
         vm.warp(block.timestamp + warpSeconds);
         vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.REBALANCE), prices, swaps);
         assertEq(vault.tradesToday(), 1, "tradesToday must reset across the day boundary");
+    }
+
+    function testFuzz_onlyGovernanceCanProposeRouterChange(address caller, address candidateRouter) public {
+        vm.assume(caller != address(this));
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.proposeRouterAllowed(candidateRouter, true);
+    }
+
+    /// @dev A malicious router added to the allowlist could redirect swap
+    /// proceeds to an attacker-controlled contract, so this must never be
+    /// instantaneous, at any elapsed time strictly less than the 48h
+    /// timelock, execution must revert.
+    function testFuzz_routerChangeNeverExecutesBeforeTimelockElapses(address candidateRouter, uint256 elapsed) public {
+        vm.assume(candidateRouter != address(router));
+        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() - 1);
+
+        vault.proposeRouterAllowed(candidateRouter, true);
+        assertFalse(vault.allowedRouters(candidateRouter));
+
+        vm.warp(block.timestamp + elapsed);
+        vm.expectRevert();
+        vault.executeRouterAllowed(candidateRouter);
+        assertFalse(vault.allowedRouters(candidateRouter), "must never take effect before the timelock elapses");
+    }
+
+    /// @dev Once the timelock has genuinely elapsed, execution is
+    /// permissionless, same "anyone can finalize, the contract enforces the
+    /// real condition" pattern as checkAndAutoPause, so a change can never
+    /// get stuck waiting on GOVERNANCE to remember to finalize it.
+    function testFuzz_routerChangeExecutesAfterTimelockByAnyCaller(address candidateRouter, address executor) public {
+        vm.assume(candidateRouter != address(router));
+        vm.assume(executor != address(0));
+
+        vault.proposeRouterAllowed(candidateRouter, true);
+        vm.warp(block.timestamp + vault.ROUTER_CHANGE_TIMELOCK() + 1);
+
+        vm.prank(executor);
+        vault.executeRouterAllowed(candidateRouter);
+        assertTrue(vault.allowedRouters(candidateRouter));
+    }
+
+    /// @dev Removing a router (not just adding one) also goes through the
+    /// same timelock, not just additions.
+    function testFuzz_routerRemovalAlsoTimelocked(uint256 elapsed) public {
+        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() - 1);
+        assertTrue(vault.allowedRouters(address(router)), "sanity: the initial router starts allowed");
+
+        vault.proposeRouterAllowed(address(router), false);
+        vm.warp(block.timestamp + elapsed);
+        vm.expectRevert();
+        vault.executeRouterAllowed(address(router));
+        assertTrue(vault.allowedRouters(address(router)), "removal must never take effect before the timelock elapses");
     }
 }

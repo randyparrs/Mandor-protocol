@@ -35,10 +35,12 @@ interface IWUSDC {
 /// Router address status (confirmed, not assumed): it is NOT hardcoded
 /// anywhere. MandateVault's constructor takes it as `initialSwapRouter_`,
 /// stored in the same `allowedRouters` mapping GOVERNANCE can add to or
-/// remove from at any time via `setRouterAllowed`, exactly like the oracle
-/// feed address pattern (injected, configurable, never baked into the
-/// contract). Migrating to the official Uniswap Labs router later, once it
-/// has a documented address, is a governance action, not a code change.
+/// remove from via `proposeRouterAllowed`/`executeRouterAllowed` (a
+/// self-contained 48h timelock, code-enforced, see MandateVault.sol),
+/// exactly like the oracle feed address pattern (injected, configurable,
+/// never baked into the contract). Migrating to the official Uniswap Labs
+/// router later, once it has a documented address, is a governance action,
+/// not a code change, and never instantaneous.
 ///
 /// EURC and cirBTC pool confirmed (Mandate's actual target assets, not just
 /// a launchpad token pair): read directly from the Factory's own
@@ -177,7 +179,8 @@ contract MandateVaultArcForkTest is Test {
             sqrtPriceLimitX96: 0
         });
 
-        vault.setRouterAllowed(ROUTER, true);
+        // ROUTER is already allowlisted, it was passed as initialSwapRouter_
+        // in the constructor above.
 
         bool ok = vault.executeDecision(
             IVaultPolicy.Decision({

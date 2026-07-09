@@ -322,8 +322,37 @@ describe("MandateVault", () => {
     assert.equal(await vault.read.totalAssets(), parseUnits("100", 18), "ledgered funds must be untouched");
   });
 
-  it("only GOVERNANCE_ROLE can set an allowed router or sweep dust", async () => {
+  it("only GOVERNANCE_ROLE can propose a router allowlist change or sweep dust", async () => {
     const { vault, other, router } = await setup();
-    await assert.rejects(vault.write.setRouterAllowed([router.address, true], { account: other.account }));
+    await assert.rejects(vault.write.proposeRouterAllowed([router.address, true], { account: other.account }));
+  });
+
+  it("a router allowlist change is never instantaneous, and cannot execute before the 48h timelock elapses", async () => {
+    const { vault, governance, other, viem } = await setup();
+    // A fresh, not-yet-allowlisted router, distinct from the one already
+    // set at construction (which is allowed from block zero and would make
+    // this test's "starts false" assumption wrong).
+    const candidateRouter = await viem.deployContract("MockSwapRouter");
+
+    await vault.write.proposeRouterAllowed([candidateRouter.address, true], { account: governance.account });
+    assert.equal(await vault.read.allowedRouters([candidateRouter.address]), false);
+
+    await assert.rejects(vault.write.executeRouterAllowed([candidateRouter.address], { account: other.account }));
+
+    // Read the exact executableAt the contract actually recorded, rather
+    // than reconstructing it from a separately-fetched block timestamp,
+    // which can drift by a second or two against the real value. The
+    // timestamp is set for the very next block only, immediately before
+    // the transaction that actually needs it, no intermediate empty-block
+    // mine in between, so there's no extra auto-incremented block for the
+    // real call to land in one second later than intended.
+    const executableAt = await vault.read.routerChangeExecutableAt([candidateRouter.address]);
+    const pub = await viem.getPublicClient();
+    await pub.request({ method: "evm_setNextBlockTimestamp" as any, params: [`0x${(executableAt - 1n).toString(16)}`] as any });
+    await assert.rejects(vault.write.executeRouterAllowed([candidateRouter.address], { account: other.account }));
+
+    await pub.request({ method: "evm_setNextBlockTimestamp" as any, params: [`0x${(executableAt + 1n).toString(16)}`] as any });
+    await vault.write.executeRouterAllowed([candidateRouter.address], { account: other.account });
+    assert.equal(await vault.read.allowedRouters([candidateRouter.address]), true);
   });
 });

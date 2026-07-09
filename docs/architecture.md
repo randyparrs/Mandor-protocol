@@ -263,22 +263,39 @@ per vault, never touches policy limits or withdrawals), `KEEPER` (the
 executor service's onchain identity, can only call `executeDecision`,
 nothing else), `GOVERNANCE` (team multisig behind a timelock, the narrow set
 of parameters that legitimately change over time: oracle feed address, DEX
-router allowlist, capital limit registry values; cannot touch `VaultPolicy`'s
-immutable limits, because they're immutable).
+router allowlist (its own dedicated code-enforced timelock, see below),
+capital limit registry values, `autoPauseBountyAmount`; cannot touch
+`VaultPolicy`'s immutable limits, because they're immutable).
 
 **Concrete timelock duration: 48 hours minimum for anything touching
 fund-safety-relevant parameters**, matching the common DeFi standard
-(Compound and Aave both use timelocks in this range). This is not yet a
-deployed constraint (`MandateVault.setRouterAllowed` and the future
-`OracleRegistry`/`CapitalLimitRegistry` are plain `onlyGovernance` today,
-with no timelock code of their own, per the "router timelocking is a
-deployment/ops decision, not vault code" note above), it is achieved
-entirely by which address is actually granted `GOVERNANCE_ROLE`. That
-address must be an OpenZeppelin `TimelockController` (already installed,
+(Compound and Aave both use timelocks in this range). For most such
+parameters (the future `OracleRegistry`/`CapitalLimitRegistry`), this is not
+yet a deployed constraint, it is achieved entirely by which address is
+actually granted `GOVERNANCE_ROLE`. That address must be an OpenZeppelin
+`TimelockController` (already installed,
 `node_modules/@openzeppelin/contracts/governance/TimelockController.sol`)
 deployed with `minDelay = 48 hours`, never an EOA or a plain multisig with
 no delay, once real capital is at stake. Documented here as the concrete
 planned value so "a timelock" is not left as an undefined concept.
+
+**Router allowlist changes are the one exception: a self-contained,
+code-enforced 48h timelock, not just the convention above.** A malicious
+router added to the allowlist could redirect swap proceeds to an
+attacker-controlled contract during `executeDecision`, severe and immediate
+enough that relying entirely on deployment configuration (whether
+`GOVERNANCE_ROLE` happens to be a real `TimelockController`) was judged
+insufficient. `MandateVault` implements its own two-step
+`proposeRouterAllowed`/`executeRouterAllowed` (`ROUTER_CHANGE_TIMELOCK =
+48 hours`, a contract constant): `GOVERNANCE` proposes a change,
+`executeRouterAllowed` reverts for anyone until the timelock has genuinely
+elapsed, and then, once ready, execution is **permissionless**, the same
+"anyone can finalize, the contract itself enforces the real condition"
+pattern already used for `checkAndAutoPause` and `P2PMarket.sol`'s
+`expire()`, so a proposed change can never get stuck waiting on
+`GOVERNANCE` to remember to come back and finalize it. This applies equally
+to adding and removing a router; removing one is not treated as urgent
+enough to skip the delay.
 
 **Oracle feed switches are validated against the outgoing feed's last price.**
 An oracle address change is a historically common DeFi attack vector (swap in

@@ -53,6 +53,16 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     /// exists. Left at address(0) means uncapped.
     address public capitalLimitRegistry;
 
+    /// @dev Self-contained timelock for router allowlist changes only, see
+    /// proposeRouterAllowed/executeRouterAllowed. A malicious router could
+    /// redirect swap proceeds to an attacker, so this one governance action
+    /// is code-enforced rather than left to the "GOVERNANCE_ROLE is held by
+    /// a real TimelockController" convention documented in
+    /// docs/architecture.md for everything else.
+    uint256 public constant ROUTER_CHANGE_TIMELOCK = 48 hours;
+    mapping(address router => uint256 executableAt) public routerChangeExecutableAt;
+    mapping(address router => bool pendingAllowed) public pendingRouterChange;
+
     /// @dev Deliberately mutable, unlike everything in VaultPolicy: this is
     /// an economic incentive to keep checkAndAutoPause's permissionless
     /// path real, not a risk limit, so it needs to track gas costs and
@@ -60,7 +70,17 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     /// behind the same 48h timelock convention documented in
     /// docs/architecture.md for anything fund-safety-relevant), never
     /// touched by VaultPolicy, which only ever triggers the callback.
+    /// Hard-capped by MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE/BPS below regardless of
+    /// what GOVERNANCE sets here, see payAutoPauseBounty.
     uint256 public autoPauseBountyAmount;
+
+    /// @dev Hard, non-governance-adjustable ceilings on a single bounty
+    /// payout, so even a compromised or mistaken GOVERNANCE setting
+    /// `autoPauseBountyAmount` too high can never drain a meaningful
+    /// portion of the vault through one legitimate pause trigger. The
+    /// smaller of the two always applies, see payAutoPauseBounty.
+    uint256 public constant MAX_AUTO_PAUSE_BOUNTY_BPS = 100; // 1% of current totalAssets()
+    uint256 public constant MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE = 1000e18; // 1000 USDC, 18-decimal native
 
     uint256 public tradesToday;
     uint256 public tradeDayStart;
@@ -88,6 +108,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     event DecisionExecuted(IVaultPolicy.DecisionAction indexed action, address indexed asset, uint256 amount);
     event SwapExecuted(address indexed router, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
     event RouterAllowedSet(address indexed router, bool allowed);
+    event RouterChangeProposed(address indexed router, bool allowed, uint256 executableAt);
     event CapitalLimitRegistrySet(address indexed registry);
     event DustSwept(address indexed asset, address indexed to, uint256 amount);
     event AutoPauseBountyAmountSet(uint256 amount);
@@ -104,6 +125,8 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     error InsufficientSwapOutput(uint256 amountOut, uint256 minAmountOut);
     error UnregisteredAsset(address asset);
     error NoDust();
+    error BountyAmountExceedsCap(uint256 amount, uint256 cap);
+    error RouterChangeNotReady(uint256 executableAt);
 
     modifier onlyFactory() {
         if (msg.sender != factory) revert NotFactory();
@@ -375,9 +398,28 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     /// opted into a bounty yet doesn't turn every auto-pause into a failed
     /// call. Guarded by nonReentrant since, unlike VaultPolicy (which holds
     /// no funds), this function actually moves them.
+    ///
+    /// @dev The actual amount paid is capped here, at payout time, to the
+    /// SMALLER of MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE and
+    /// MAX_AUTO_PAUSE_BOUNTY_BPS of the vault's CURRENT totalAssets(), not
+    /// just validated once when GOVERNANCE sets the value. This is
+    /// deliberate: totalAssets() can move a lot between when a bounty is
+    /// configured and when it is actually paid out (deposits, withdrawals,
+    /// losses), so capping only at set-time would not guarantee the payout
+    /// stays small relative to the vault at the moment it actually happens.
+    /// Even a compromised or mistaken GOVERNANCE setting an absurd
+    /// `autoPauseBountyAmount` can never drain more than this hard,
+    /// non-governance-adjustable ceiling in a single payout.
     function payAutoPauseBounty(address to) external nonReentrant {
         if (msg.sender != policy) revert NotPolicy();
         uint256 amount = autoPauseBountyAmount;
+        if (amount == 0) return;
+
+        uint256 percentCap = (totalAssets() * MAX_AUTO_PAUSE_BOUNTY_BPS) / 10_000;
+        uint256 cap = percentCap < MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE ? percentCap : MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE;
+        if (amount > cap) {
+            amount = cap;
+        }
         if (amount == 0) return;
 
         _ledger[asset()] -= amount;
@@ -389,8 +431,33 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     // Governance
     // ---------------------------------------------------------------------
 
-    function setRouterAllowed(address router, bool allowed) external onlyGovernance {
+    /// @notice Step 1 of 2 for changing the router allowlist. Never
+    /// instantaneous, code-enforced, not just left to the convention that
+    /// GOVERNANCE_ROLE happens to be held by an external TimelockController.
+    /// A malicious router added to the allowlist could redirect swap
+    /// proceeds to an attacker-controlled contract, this is one of the few
+    /// governance actions severe enough to warrant its own self-contained
+    /// timelock in this contract, independent of deployment configuration.
+    function proposeRouterAllowed(address router, bool allowed) external onlyGovernance {
+        uint256 executableAt = block.timestamp + ROUTER_CHANGE_TIMELOCK;
+        pendingRouterChange[router] = allowed;
+        routerChangeExecutableAt[router] = executableAt;
+        emit RouterChangeProposed(router, allowed, executableAt);
+    }
+
+    /// @notice Step 2 of 2. Permissionless once the timelock has elapsed,
+    /// same "anyone can escalate, the contract enforces the real condition"
+    /// pattern already used for checkAndAutoPause and P2PMarket.sol's
+    /// expire(), so a change can never get stuck waiting on GOVERNANCE to
+    /// remember to come back and finalize it.
+    function executeRouterAllowed(address router) external {
+        uint256 executableAt = routerChangeExecutableAt[router];
+        if (executableAt == 0 || block.timestamp < executableAt) revert RouterChangeNotReady(executableAt);
+
+        bool allowed = pendingRouterChange[router];
         allowedRouters[router] = allowed;
+        delete routerChangeExecutableAt[router];
+        delete pendingRouterChange[router];
         emit RouterAllowedSet(router, allowed);
     }
 
@@ -401,12 +468,18 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
 
     /// @notice The bounty is an economic incentive, not a risk limit, so
     /// unlike everything in VaultPolicy it is deliberately adjustable, to
-    /// track gas costs and USDC value context over time. No hard cap
-    /// enforced in code; GOVERNANCE is expected to keep it small relative
-    /// to the loss a timely pause prevents, and in practice this action
-    /// should go through the same 48h-timelock convention documented in
+    /// track gas costs and USDC value context over time. Rejected outright
+    /// if it exceeds MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE, an early, cheap check;
+    /// the real, always-enforced ceiling (which also accounts for
+    /// MAX_AUTO_PAUSE_BOUNTY_BPS of current TVL) is applied fresh at
+    /// payout time in payAutoPauseBounty, since TVL can move a lot between
+    /// this call and an actual payout. In practice this action should go
+    /// through the same 48h-timelock convention documented in
     /// docs/architecture.md for fund-safety-relevant parameters.
     function setAutoPauseBountyAmount(uint256 amount) external onlyGovernance {
+        if (amount > MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE) {
+            revert BountyAmountExceedsCap(amount, MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE);
+        }
         autoPauseBountyAmount = amount;
         emit AutoPauseBountyAmountSet(amount);
     }
