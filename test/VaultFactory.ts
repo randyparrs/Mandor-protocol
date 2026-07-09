@@ -37,14 +37,15 @@ async function setup() {
   const eurc = await viem.deployContract("MockERC20", ["Euro Coin", "EURC", 6]);
   const router = await viem.deployContract("MockSwapRouter");
   const vaultDeployer = await viem.deployContract("MandateVaultDeployer");
+  const capitalLimitRegistry = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("10000", 18)]);
 
-  const factory = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer.address]);
+  const factory = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer.address, capitalLimitRegistry.address]);
   await vaultDeployer.write.setFactory([factory.address]);
 
   await usdc.write.mint([admin.account.address, parseUnits("10000", 18)]);
   await usdc.write.approve([factory.address, parseUnits("10000", 18)], { account: admin.account });
 
-  return { viem, pub, admin, treasury, other, roles, usdc, eurc, router, vaultDeployer, factory };
+  return { viem, pub, admin, treasury, other, roles, usdc, eurc, router, vaultDeployer, capitalLimitRegistry, factory };
 }
 
 function createParams(over: Record<string, unknown> = {}) {
@@ -157,7 +158,8 @@ describe("VaultFactory", () => {
     // one actually wired to call it, and the revert we're testing for
     // (insufficient allowance) is the real cause, not a mismatched deployer.
     const vaultDeployer2 = await viem.deployContract("MandateVaultDeployer");
-    const factory2 = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer2.address]);
+    const capitalLimitRegistry2 = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("10000", 18)]);
+    const factory2 = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer2.address, capitalLimitRegistry2.address]);
     await vaultDeployer2.write.setFactory([factory2.address]);
 
     const params = createParams({ usdc: usdc.address, initialSwapRouter: router.address });
@@ -192,5 +194,38 @@ describe("VaultFactory", () => {
   it("only ADMIN_ROLE can set the protocol treasury", async () => {
     const { factory, other } = await setup();
     await assert.rejects(factory.write.setProtocolTreasury([other.account.address], { account: other.account }));
+  });
+
+  it("createVault reverts if capitalLimitRegistry is unset", async () => {
+    const { viem, roles, treasury, usdc, router, admin } = await setup();
+    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    const factoryWithoutRegistry = await viem.deployContract("VaultFactory", [
+      roles.address,
+      treasury.account.address,
+      freshDeployer.address,
+      "0x0000000000000000000000000000000000000000",
+    ]);
+    await freshDeployer.write.setFactory([factoryWithoutRegistry.address]);
+    await usdc.write.approve([factoryWithoutRegistry.address, parseUnits("1000", 18)], { account: admin.account });
+
+    const params = createParams({ usdc: usdc.address, initialSwapRouter: router.address });
+    await assert.rejects(factoryWithoutRegistry.write.createVault([params], { account: admin.account }));
+  });
+
+  it("a freshly created vault already rejects a deposit above the registry cap, with no extra setup step", async () => {
+    const { viem, factory, capitalLimitRegistry, usdc, router, admin } = await setup();
+    const params = createParams({ usdc: usdc.address, initialSwapRouter: router.address, seedAmount: parseUnits("100", 18) });
+    await factory.write.createVault([params], { account: admin.account });
+
+    const vaultAddress = await factory.read.allVaults([0n]);
+    const vault = await viem.getContractAt("MandateVault", vaultAddress);
+
+    assert.equal(await vault.read.capitalLimitRegistry(), getAddress(capitalLimitRegistry.address));
+
+    const cap = await capitalLimitRegistry.read.maxTotalAssetsValue();
+    const room = cap - (await vault.read.totalAssets());
+    await usdc.write.mint([admin.account.address, room + parseUnits("1", 18)]);
+    await usdc.write.approve([vaultAddress, room + parseUnits("1", 18)], { account: admin.account });
+    await assert.rejects(vault.write.deposit([room + 1n, admin.account.address], { account: admin.account }));
   });
 });

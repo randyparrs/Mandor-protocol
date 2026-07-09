@@ -25,13 +25,25 @@ Solidity contracts. Phase 1 status: design only, nothing implemented yet.
   not skip this payout, it's what keeps the permissionless path real instead
   of theoretical (see `docs/architecture.md`).
 - `VaultFactory.sol`, deploys Vault+Policy pairs; atomically seeds the
-  protocol-owned anti-inflation deposit at creation time.
-- `VaultRegistry.sol`, canonical on-chain vault list, roles, and the
-  `strategyAuthor` field (kept generic on purpose, see `docs/architecture.md`
-  §"Why Agent Studio isn't designed here").
+  protocol-owned anti-inflation deposit at creation time; also wires each
+  new vault's `capitalLimitRegistry` right after the seed deposit, so the
+  cap is enforced from the vault's first possible deposit.
+- `VaultRegistry.sol`, deferred to Phase 4, not built. Its canonical
+  on-chain vault list responsibility is already covered by `VaultFactory`'s
+  own `allVaults`/`isMandateVault`; the only genuinely missing piece is the
+  `strategyAuthor` field (kept generic on purpose, see
+  `docs/architecture.md` §"Why Agent Studio isn't designed here"), which has
+  no practical effect while the team is the sole vault creator.
 - `CapitalLimitRegistry.sol`, deposit caps, deliberately kept out of the
   immutable `VaultPolicy` since caps are meant to move over time as a vault
-  proves itself; mutable only by `GOVERNANCE`, behind a timelock.
+  proves itself. Phase 2 ships a deliberately minimal stub: one maximum
+  totalAssets value, the same for every vault. Raising it goes through its
+  own 48h timelock (`proposeMaxTotalAssets`/`executeMaxTotalAssets`,
+  `ADMIN`-gated to propose, `PAUSER_ROLE` can cancel), same recipe as the
+  router allowlist and `sweepDust`, since raising the cap is the exact
+  action progressive trust is meant to gate, an instant increase becomes a
+  real attack surface once Phase 4 makes caps per-vault. Progressive,
+  reputation-based, per-vault tiers are Phase 4.
 - `access/Roles.sol`, `governance/Timelock.sol`, RBAC constants and the OZ
   timelock wrapper for any fund-safety-affecting parameter change.
 

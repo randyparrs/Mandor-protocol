@@ -23,26 +23,34 @@ contract VaultFactory {
     /// @dev Split out purely for contract size, see MandateVaultDeployer.sol.
     MandateVaultDeployer public immutable vaultDeployer;
     address public protocolTreasury;
+    /// @dev Wired into every new vault at creation time, see createVault, so
+    /// "new vaults start with low capital limits" (docs/threat-model.md) is
+    /// enforced from the first possible deposit, never a manual step that
+    /// could be forgotten. See contracts/CapitalLimitRegistry.sol.
+    address public capitalLimitRegistry;
 
     address[] public allVaults;
     mapping(address vault => bool exists) public isMandateVault;
 
     event VaultCreated(address indexed vault, address indexed policy, address indexed creator, uint256 seedAmount);
     event ProtocolTreasurySet(address indexed treasury);
+    event CapitalLimitRegistrySet(address indexed registry);
 
     error NotAdmin();
     error ZeroSeedAmount();
     error ZeroTreasury();
+    error ZeroCapitalLimitRegistry();
 
     modifier onlyAdmin() {
         if (!IAccessControl(roles).hasRole(ADMIN_ROLE, msg.sender)) revert NotAdmin();
         _;
     }
 
-    constructor(address roles_, address protocolTreasury_, MandateVaultDeployer vaultDeployer_) {
+    constructor(address roles_, address protocolTreasury_, MandateVaultDeployer vaultDeployer_, address capitalLimitRegistry_) {
         roles = roles_;
         protocolTreasury = protocolTreasury_;
         vaultDeployer = vaultDeployer_;
+        capitalLimitRegistry = capitalLimitRegistry_;
     }
 
     struct CreateVaultParams {
@@ -63,6 +71,7 @@ contract VaultFactory {
     function createVault(CreateVaultParams memory params) external onlyAdmin returns (address vault, address policy) {
         if (params.seedAmount == 0) revert ZeroSeedAmount();
         if (protocolTreasury == address(0)) revert ZeroTreasury();
+        if (capitalLimitRegistry == address(0)) revert ZeroCapitalLimitRegistry();
 
         // vaultDeployer.deploy reverts for any caller other than this
         // contract's own address (set once via vaultDeployer.setFactory
@@ -83,6 +92,13 @@ contract VaultFactory {
         params.usdc.forceApprove(address(v), params.seedAmount);
         v.deposit(params.seedAmount, protocolTreasury);
 
+        // Set after the seed deposit, not before: the atomic seed deposit is
+        // a protocol-controlled bootstrapping step, not a "public" deposit
+        // this cap is meant to gate, and setting it here still means the
+        // cap is active before any external depositor could possibly reach
+        // this brand new vault, all within this same transaction.
+        v.setCapitalLimitRegistry(capitalLimitRegistry);
+
         allVaults.push(address(v));
         isMandateVault[address(v)] = true;
 
@@ -93,6 +109,11 @@ contract VaultFactory {
     function setProtocolTreasury(address treasury) external onlyAdmin {
         protocolTreasury = treasury;
         emit ProtocolTreasurySet(treasury);
+    }
+
+    function setCapitalLimitRegistry(address registry) external onlyAdmin {
+        capitalLimitRegistry = registry;
+        emit CapitalLimitRegistrySet(registry);
     }
 
     function vaultCount() external view returns (uint256) {

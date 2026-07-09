@@ -8,15 +8,19 @@ import {VaultPolicy} from "../contracts/VaultPolicy.sol";
 import {MandateVault} from "../contracts/MandateVault.sol";
 import {MandateVaultDeployer} from "../contracts/MandateVaultDeployer.sol";
 import {MandateRoles} from "../contracts/access/MandateRoles.sol";
+import {CapitalLimitRegistry} from "../contracts/CapitalLimitRegistry.sol";
 import {MockERC20} from "../contracts/test/MockERC20.sol";
 import {MockSwapRouter} from "../contracts/test/MockSwapRouter.sol";
 
 contract VaultFactoryTest is Test {
+    uint256 internal constant DEFAULT_MAX_TOTAL_ASSETS = 10_000e18;
+
     MandateRoles internal roles;
     MockERC20 internal usdc;
     MockERC20 internal eurc;
     MockSwapRouter internal router;
     MandateVaultDeployer internal vaultDeployer;
+    CapitalLimitRegistry internal capitalLimitRegistry;
     VaultFactory internal factory;
     address internal treasury = address(0x7EA5);
 
@@ -28,8 +32,9 @@ contract VaultFactoryTest is Test {
         eurc = new MockERC20("Euro Coin", "EURC", 6);
         router = new MockSwapRouter();
         vaultDeployer = new MandateVaultDeployer();
+        capitalLimitRegistry = new CapitalLimitRegistry(address(roles), DEFAULT_MAX_TOTAL_ASSETS);
 
-        factory = new VaultFactory(address(roles), treasury, vaultDeployer);
+        factory = new VaultFactory(address(roles), treasury, vaultDeployer, address(capitalLimitRegistry));
         vaultDeployer.setFactory(address(factory));
 
         usdc.mint(address(this), 1_000_000e18);
@@ -106,5 +111,34 @@ contract VaultFactoryTest is Test {
         assertGt(v.totalSupply(), 0, "seed shares must exist immediately");
         assertGt(v.totalAssets(), 0, "seed assets must back those shares immediately");
         assertEq(v.balanceOf(treasury), v.totalSupply(), "treasury must hold exactly the seed shares");
+    }
+
+    function test_createVaultRevertsWhenCapitalLimitRegistryUnset() public {
+        MandateVaultDeployer freshDeployer = new MandateVaultDeployer();
+        VaultFactory factoryWithoutRegistry = new VaultFactory(address(roles), treasury, freshDeployer, address(0));
+        freshDeployer.setFactory(address(factoryWithoutRegistry));
+        usdc.approve(address(factoryWithoutRegistry), type(uint256).max);
+
+        vm.expectRevert();
+        factoryWithoutRegistry.createVault(_params(100e18));
+    }
+
+    /// @dev The exact scenario the capital-limit gate exists for: a freshly
+    /// created vault already enforces the registry's cap against the very
+    /// first external deposit attempt, no separate call needed after
+    /// createVault returns.
+    function test_freshlyCreatedVaultRejectsDepositAboveRegistryCapWithNoExtraSetup() public {
+        (address vaultAddr,) = factory.createVault(_params(100e18));
+        MandateVault v = MandateVault(vaultAddr);
+        assertEq(v.capitalLimitRegistry(), address(capitalLimitRegistry), "the cap must already be wired");
+
+        uint256 room = DEFAULT_MAX_TOTAL_ASSETS - v.totalAssets();
+        address depositor = address(0xD00D);
+        usdc.mint(depositor, room + 1);
+        vm.startPrank(depositor);
+        usdc.approve(address(v), room + 1);
+        vm.expectRevert();
+        v.deposit(room + 1, depositor);
+        vm.stopPrank();
     }
 }

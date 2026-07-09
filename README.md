@@ -23,20 +23,34 @@ to delay.
 
 ## Status
 
-Phase 1 only: architecture and shared types. No contracts are implemented, no
-Claude wiring exists yet, there is no working frontend or backend. See
-`docs/architecture.md` for the full design.
+Phase 2 complete. `VaultPolicy`, `MandateVault`, `VaultFactory`,
+`MandateVaultDeployer`, and `CapitalLimitRegistry` are implemented, with
+Foundry fuzz coverage (1000 runs per property) and real forge invariant
+tests (multi-call, stateful fuzzing across arbitrary action sequences via
+`test/MandateVaultInvariant.t.sol`), not just single-call property tests.
+`CapitalLimitRegistry` is a deliberately minimal Phase 2 stub, one
+ADMIN-settable maximum totalAssets value applied identically to every vault,
+enforced from the moment a vault is created; reputation-based progressive
+tiers are Phase 4. `VaultRegistry.sol` (a dedicated on-chain contract for the
+`strategyAuthor` field) is deferred to Phase 4: the canonical vault list it
+was meant to provide is already covered by `VaultFactory`'s own
+`allVaults`/`isMandateVault`, and `strategyAuthor` has no practical effect
+while the team is the sole vault creator. No Claude wiring exists yet, there
+is no working frontend or backend. See `docs/architecture.md` for the full
+design.
 
 ## Phase plan
 
 - **Phase 1 (this state):** architecture, folder structure, shared types,
   threat model, Vault Policy validation logic designed on paper.
-- **Phase 2:** `VaultPolicy` and `MandateVault` contracts implemented, with
-  Foundry test coverage and invariant tests started immediately, not deferred.
+- **Phase 2:** `VaultPolicy`, `MandateVault`, `VaultFactory`, and a minimal
+  fixed-cap `CapitalLimitRegistry` implemented, with Foundry test coverage
+  and invariant tests started immediately, not deferred. `VaultRegistry.sol`
+  and progressive/reputation-based capital limits are Phase 4.
 - **Phase 3:** real Claude wiring (`agent/core`), the keeper/executor service,
   Paper Vault simulation mode.
 - **Phase 4:** reputation, withdrawal/NAV mechanics, oracle aggregation,
-  progressive capital limits.
+  progressive capital limits, `VaultRegistry.sol`.
 - **Phase 5:** hardening, audit prep, bug bounty, monitoring, incident-response
   runbook finalized.
 

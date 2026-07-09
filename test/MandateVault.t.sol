@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MandateVault} from "../contracts/MandateVault.sol";
 import {VaultPolicy} from "../contracts/VaultPolicy.sol";
 import {MandateRoles} from "../contracts/access/MandateRoles.sol";
+import {CapitalLimitRegistry} from "../contracts/CapitalLimitRegistry.sol";
 import {MockERC20} from "../contracts/test/MockERC20.sol";
 import {MockSwapRouter} from "../contracts/test/MockSwapRouter.sol";
 import {IVaultPolicy} from "../contracts/interfaces/IVaultPolicy.sol";
@@ -420,5 +421,157 @@ contract MandateVaultTest is Test {
 
         vm.expectRevert();
         vault.cancelRouterAllowedChange(candidateRouter);
+    }
+
+    function testFuzz_onlyGovernanceCanProposeSweepDust(address caller) public {
+        vm.assume(caller != address(this));
+        usdc.mint(address(vault), 1e18);
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.proposeSweepDust(address(usdc), caller);
+    }
+
+    /// @dev sweepDust is the one place MandateVault ever reads a live
+    /// balanceOf. This is the core guarantee that makes that safe: the swept
+    /// amount is always exactly liveBalance - ledger at propose time, so the
+    /// vault's real balance can never end up below what the ledger records,
+    /// for any deposit or dust amount, meaning a compromised GOVERNANCE
+    /// calling this can only ever misdirect unaccounted excess, never
+    /// ledgered depositor funds. See docs/architecture.md and
+    /// docs/threat-model.md.
+    function testFuzz_sweepDustNeverReducesBalanceBelowLedger(uint256 depositAmount, uint256 dustAmount, address to) public {
+        vm.assume(to != address(0) && to != address(vault));
+        depositAmount = bound(depositAmount, 1, 1e30);
+        dustAmount = bound(dustAmount, 1, 1e30);
+
+        _deposit(user1, depositAmount);
+        usdc.mint(address(vault), dustAmount);
+
+        uint256 ledgerBefore = vault.ledgerOf(address(usdc));
+        vault.proposeSweepDust(address(usdc), to);
+        vm.warp(block.timestamp + vault.SWEEP_DUST_TIMELOCK() + 1);
+        vault.executeSweepDust(address(usdc));
+
+        assertEq(vault.ledgerOf(address(usdc)), ledgerBefore, "sweepDust must never touch the ledger itself");
+        assertEq(usdc.balanceOf(address(vault)), ledgerBefore, "the vault's real balance must equal the ledger exactly after a sweep");
+        assertEq(usdc.balanceOf(to), dustAmount, "exactly the dust, no more, no less, must reach the recipient");
+    }
+
+    /// @dev Reverts rather than silently no-op-ing when there is nothing
+    /// above the ledger to sweep, so a call against a vault with no dust
+    /// fails loudly instead of giving false confidence.
+    function test_sweepDustRevertsWhenNoDust() public {
+        _deposit(user1, 1e21);
+        vm.expectRevert();
+        vault.proposeSweepDust(address(usdc), address(this));
+    }
+
+    /// @dev A large accidental direct transfer also counts as dust under
+    /// this definition, so it must never be sweepable instantly: the sender
+    /// deserves a real window to notice and ask for it back, matching the
+    /// same 48h convention already used for router allowlist changes.
+    function testFuzz_sweepDustNeverExecutesBeforeTimelockElapses(uint256 dustAmount, uint256 elapsed) public {
+        dustAmount = bound(dustAmount, 1, 1e30);
+        elapsed = bound(elapsed, 0, vault.SWEEP_DUST_TIMELOCK() - 1);
+        usdc.mint(address(vault), dustAmount);
+
+        vault.proposeSweepDust(address(usdc), address(this));
+        vm.warp(block.timestamp + elapsed);
+        vm.expectRevert();
+        vault.executeSweepDust(address(usdc));
+        assertEq(usdc.balanceOf(address(this)), 0, "must never take effect before the timelock elapses");
+    }
+
+    /// @dev Once the timelock has genuinely elapsed, execution is
+    /// permissionless, same pattern as executeRouterAllowed.
+    function testFuzz_sweepDustExecutesAfterTimelockByAnyCaller(uint256 dustAmount, address executor) public {
+        vm.assume(executor != address(0));
+        dustAmount = bound(dustAmount, 1, 1e30);
+        usdc.mint(address(vault), dustAmount);
+
+        vault.proposeSweepDust(address(usdc), address(this));
+        vm.warp(block.timestamp + vault.SWEEP_DUST_TIMELOCK() + 1);
+
+        vm.prank(executor);
+        vault.executeSweepDust(address(usdc));
+        assertEq(usdc.balanceOf(address(this)), dustAmount);
+    }
+
+    /// @dev PAUSER_ROLE, a different role than the GOVERNANCE_ROLE that
+    /// proposes, can cancel a pending sweep at any point before it executes,
+    /// giving a real window to stop an accidental large transfer from being
+    /// swept away, not just watch it count down.
+    function testFuzz_pauserCanCancelPendingSweepAtAnyPointBeforeExecution(uint256 dustAmount, uint256 elapsed) public {
+        dustAmount = bound(dustAmount, 1, 1e30);
+        elapsed = bound(elapsed, 0, vault.SWEEP_DUST_TIMELOCK() * 10);
+        usdc.mint(address(vault), dustAmount);
+
+        vault.proposeSweepDust(address(usdc), address(this));
+        vm.warp(block.timestamp + elapsed);
+
+        vault.cancelSweepDust(address(usdc));
+        (, , uint256 executableAt) = vault.pendingSweep(address(usdc));
+        assertEq(executableAt, 0);
+
+        vm.expectRevert();
+        vault.executeSweepDust(address(usdc));
+        assertEq(usdc.balanceOf(address(this)), 0, "a cancelled sweep must never take effect, timelock or not");
+    }
+
+    function testFuzz_onlyPauserCanCancelSweepDust(address caller) public {
+        vm.assume(caller != address(this));
+        usdc.mint(address(vault), 1e18);
+        vault.proposeSweepDust(address(usdc), address(this));
+
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.cancelSweepDust(address(usdc));
+    }
+
+    function testFuzz_cancellingSweepWithNoPendingChangeReverts(address asset_) public {
+        vm.assume(asset_ != address(0));
+        vm.expectRevert();
+        vault.cancelSweepDust(asset_);
+    }
+
+    /// @dev With no registry set (the default in every other test in this
+    /// file), maxDeposit is uncapped except by OZ's own overflow guard,
+    /// confirming the capital-limit gate is opt-in, never accidentally
+    /// restrictive when unconfigured.
+    function test_maxDepositUncappedWhenRegistryUnset() public view {
+        assertEq(vault.capitalLimitRegistry(), address(0));
+        assertGt(vault.maxDeposit(address(this)), 1_000_000_000e18);
+    }
+
+    /// @dev Once a registry is wired, maxDeposit is capped to exactly the
+    /// remaining room under the registry's global maxTotalAssets, and a
+    /// deposit of that exact remaining room succeeds while one unit more
+    /// reverts via OZ's own ERC4626ExceededMaxDeposit error.
+    function testFuzz_maxDepositCappedByRegistry(uint256 cap, uint256 alreadyDeposited) public {
+        cap = bound(cap, 1, 1e27);
+        alreadyDeposited = bound(alreadyDeposited, 0, cap);
+        CapitalLimitRegistry registry = new CapitalLimitRegistry(address(roles), cap);
+        vault.setCapitalLimitRegistry(address(registry));
+
+        if (alreadyDeposited > 0) {
+            _deposit(user1, alreadyDeposited);
+        }
+
+        uint256 room = cap - alreadyDeposited;
+        assertEq(vault.maxDeposit(user2), room, "maxDeposit must equal exactly the remaining room under the cap");
+
+        usdc.mint(user2, 1);
+        vm.startPrank(user2);
+        usdc.approve(address(vault), 1);
+        vm.expectRevert();
+        vault.deposit(room + 1, user2);
+        vm.stopPrank();
+    }
+
+    function testFuzz_onlyFactoryOrGovernanceCanSetCapitalLimitRegistry(address caller) public {
+        vm.assume(caller != address(this));
+        vm.prank(caller);
+        vm.expectRevert();
+        vault.setCapitalLimitRegistry(address(0xCAFE));
     }
 }

@@ -23,6 +23,8 @@
 | Attack | Mitigation |
 |---|---|
 | ERC-4626 inflation attack | OZ's default virtual shares/assets offset (verify the pinned OZ version actually includes it) plus a protocol-owned minimum seed deposit, atomically deposited by `VaultFactory` in the same transaction that creates the vault |
+| Compromised or mistaken GOVERNANCE calls sweepDust to steal real depositor funds | Mathematically bounded, not just access-controlled: the swept amount is always exactly `liveBalance - ledger` at propose time, so the vault's real balance can never drop below the ledger. A compromised call can only ever misdirect accidental donations sitting above the ledger, never ledgered depositor capital. Proven by `testFuzz_sweepDustNeverReducesBalanceBelowLedger` |
+| Someone accidentally sends a large direct transfer to the vault (bypassing deposit()); GOVERNANCE sweeps it instantly to any address with no window to notice and ask for it back | `proposeSweepDust`/`executeSweepDust` go through the same 48h timelock as router allowlist changes, and `cancelSweepDust` is gated to PAUSER_ROLE (a different role than the GOVERNANCE_ROLE that proposes), so the team has a real window to stop a pending sweep and return an accidental transfer manually instead of letting it execute. Not a risk to real depositors either way, but keeps this action consistent with how every other GOVERNANCE-controlled fund movement in this design is capped or delayed |
 | USDC donation attack (Arc-specific, verified live), native USDC and its ERC-20 interface share one balance, so anyone can inflate what `balanceOf(vault)` shows via a plain native transfer, any time, not just at first deposit | `MandateVault` never uses live `balanceOf(address(this))` for USDC share-price math; it tracks its own internal accounting ledger updated only through `deposit`/`withdraw`/`executeDecision`. Unsolicited transfers sit as unaccounted dust, never affecting share price |
 | Oracle manipulation (flash loans / thin liquidity, worst for cirBTC/RWAs) | `oracleMaxStalenessSeconds` and `oracleMaxDeviationBps` are immutable fields in `VaultPolicy` itself; a stale or deviated price auto-rejects the decision and can trigger the per-vault pause; use Chainlink as primary source (verify Arc availability), median-of-sources where more than one feed exists. Feed **switches** (governance changing the address) are separately checked against the outgoing feed's last price, so a swap-in attack can't bypass this by pointing at a fresh, unvalidated feed |
 | NAV timing games | NAV computed over a short time window rather than an instantaneous block snapshot; a hard-capped, initially-zero entry/exit fee lever is reserved so it can be turned on without a redeploy |
@@ -62,8 +64,29 @@ New vaults start with low TVL limits, increasing progressively (e.g. 500,
 1,000, 5,000, 10,000) as reputation grows. There is a real maximum tier, or a
 human/governance review step once a vault crosses a significant threshold,
 never a fully unlimited tier reachable by reputation score alone. Mechanism
-lives in `CapitalLimitRegistry.sol` (Phase 4 for the actual scoring logic;
-Phase 1 only needs the contract shape and gate call site to exist).
+lives in `CapitalLimitRegistry.sol`.
+
+**Built in Phase 2, not deferred: a real, enforced fixed cap, not just a
+documented promise.** Since Phase 2 already involves real testnet deposits,
+"new vaults start with low capital limits" needed to be an actually enforced
+property now, not a plan waiting on Phase 4. `CapitalLimitRegistry.sol`
+holds one maximum totalAssets value, applied identically to every vault,
+consulted by `MandateVault.maxDeposit` on every deposit attempt, and wired
+into every new vault by `VaultFactory` at creation time, before any external
+depositor could reach it. The progressive, reputation-based scoring logic
+(the actual `500 -> 1,000 -> 5,000 -> 10,000` tiers, evaluated per vault)
+remains Phase 4 work; Phase 2 only needed the gate itself to be real.
+
+**Raising the cap goes through its own 48h timelock, not an instant ADMIN
+call.** Raising it is the exact action progressive trust exists to gate;
+today's single global value limits the practical damage (nothing to target
+yet), but Phase 4's per-vault caps would turn an instant increase into a
+real attack surface. `proposeMaxTotalAssets`/`executeMaxTotalAssets`
+(`ADMIN` proposes, execution permissionless once ready, `PAUSER_ROLE` can
+cancel during the delay) apply the same self-contained timelock already
+built for the router allowlist and `sweepDust`, to both increases and
+decreases symmetrically, so a compromised or mistaken `ADMIN` key raising
+the cap can actually be stopped during the window, not just watched.
 
 ## Strategy versioning
 

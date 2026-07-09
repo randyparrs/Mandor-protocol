@@ -310,21 +310,48 @@ describe("MandateVault", () => {
     assert.equal(await vault.read.totalAssets(), totalBefore - parseUnits("1", 18));
   });
 
-  it("sweepDust moves only the unaccounted excess, never touching ledgered funds", async () => {
-    const { vault, usdc, governance, user1, other } = await setup();
+  it("sweepDust moves only the unaccounted excess, never touching ledgered funds, after the 48h timelock elapses", async () => {
+    const { vault, usdc, governance, user1, other, pub } = await setup();
     await vault.write.deposit([parseUnits("100", 18), user1.account.address], { account: user1.account });
     await usdc.write.mint([other.account.address, parseUnits("50", 18)]);
     await usdc.write.transfer([vault.address, parseUnits("50", 18)], { account: other.account });
 
-    await vault.write.sweepDust([usdc.address, governance.account.address], { account: governance.account });
+    await vault.write.proposeSweepDust([usdc.address, governance.account.address], { account: governance.account });
+    await assert.rejects(vault.write.executeSweepDust([usdc.address], { account: other.account }));
+
+    const timelock = await vault.read.SWEEP_DUST_TIMELOCK();
+    const ts = (await pub.getBlock()).timestamp;
+    await pub.request({ method: "evm_setNextBlockTimestamp" as any, params: [`0x${(ts + timelock + 1n).toString(16)}`] as any });
+    await vault.write.executeSweepDust([usdc.address], { account: other.account });
 
     assert.equal(await usdc.read.balanceOf([governance.account.address]), parseUnits("50", 18));
     assert.equal(await vault.read.totalAssets(), parseUnits("100", 18), "ledgered funds must be untouched");
   });
 
-  it("only GOVERNANCE_ROLE can propose a router allowlist change or sweep dust", async () => {
-    const { vault, other, router } = await setup();
+  it("a large accidental direct transfer is never sweepable instantly, and PAUSER_ROLE can cancel a pending sweep before it executes", async () => {
+    const { vault, usdc, governance, pauser, user1, other } = await setup();
+    await vault.write.deposit([parseUnits("100", 18), user1.account.address], { account: user1.account });
+    await usdc.write.mint([other.account.address, parseUnits("1000", 18)]);
+    await usdc.write.transfer([vault.address, parseUnits("1000", 18)], { account: other.account });
+
+    await vault.write.proposeSweepDust([usdc.address, governance.account.address], { account: governance.account });
+    await vault.write.cancelSweepDust([usdc.address], { account: pauser.account });
+
+    await assert.rejects(vault.write.executeSweepDust([usdc.address], { account: other.account }));
+    assert.equal(await usdc.read.balanceOf([governance.account.address]), 0n, "a cancelled sweep must never take effect");
+  });
+
+  it("only GOVERNANCE_ROLE can propose a router allowlist change or a dust sweep, and only PAUSER_ROLE can cancel a pending sweep", async () => {
+    const { vault, usdc, other, router } = await setup();
     await assert.rejects(vault.write.proposeRouterAllowed([router.address, true], { account: other.account }));
+
+    await usdc.write.mint([vault.address, parseUnits("10", 18)]);
+    await assert.rejects(vault.write.proposeSweepDust([usdc.address, other.account.address], { account: other.account }));
+
+    const { vault: vault2, usdc: usdc2, governance: governance2, other: other2 } = await setup();
+    await usdc2.write.mint([vault2.address, parseUnits("10", 18)]);
+    await vault2.write.proposeSweepDust([usdc2.address, governance2.account.address], { account: governance2.account });
+    await assert.rejects(vault2.write.cancelSweepDust([usdc2.address], { account: other2.account }));
   });
 
   it("a router allowlist change is never instantaneous, and cannot execute before the 48h timelock elapses", async () => {
@@ -382,5 +409,40 @@ describe("MandateVault", () => {
 
     const neverProposedRouter = await viem.deployContract("MockSwapRouter");
     await assert.rejects(vault.write.cancelRouterAllowedChange([neverProposedRouter.address], { account: pauser.account }));
+  });
+
+  it("maxDeposit is uncapped when no capitalLimitRegistry is set, the default in every other test in this file", async () => {
+    const { vault, admin } = await setup();
+    assert.equal(await vault.read.capitalLimitRegistry(), "0x0000000000000000000000000000000000000000");
+    const maxDeposit = await vault.read.maxDeposit([admin.account.address]);
+    assert.equal(maxDeposit > parseUnits("1000000000", 18), true);
+  });
+
+  it("maxDeposit is capped to exactly the remaining room once a capitalLimitRegistry is wired, and only the factory or GOVERNANCE can wire it", async () => {
+    const { vault, roles, admin, governance, other, user1, usdc, viem } = await setup();
+    const registry = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("1000", 18)]);
+
+    await assert.rejects(vault.write.setCapitalLimitRegistry([registry.address], { account: other.account }));
+
+    // admin.account.address is the vault's factory_ per setup() above, so
+    // this proves the factory-callable half of the dual gate.
+    await vault.write.setCapitalLimitRegistry([registry.address], { account: admin.account });
+    assert.equal(await vault.read.capitalLimitRegistry(), getAddress(registry.address));
+
+    // GOVERNANCE can also change it afterwards, e.g. to swap in a smarter
+    // Phase 4 registry later without redeploying the vault.
+    const registry2 = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("1000", 18)]);
+    await vault.write.setCapitalLimitRegistry([registry2.address], { account: governance.account });
+    assert.equal(await vault.read.capitalLimitRegistry(), getAddress(registry2.address));
+
+    await vault.write.deposit([parseUnits("400", 18), user1.account.address], { account: user1.account });
+    assert.equal(await vault.read.maxDeposit([user1.account.address]), parseUnits("600", 18));
+
+    // Mint/approve well beyond the remaining room, so the only thing that
+    // can block this next deposit is the registry cap itself, not an
+    // incidental balance/allowance shortfall.
+    await usdc.write.mint([user1.account.address, parseUnits("1000", 18)]);
+    await usdc.write.approve([vault.address, parseUnits("2000", 18)], { account: user1.account });
+    await assert.rejects(vault.write.deposit([parseUnits("601", 18), user1.account.address], { account: user1.account }));
   });
 });

@@ -225,8 +225,32 @@ internal accounting variable for USDC-denominated assets, incremented only by
 math must use that internal ledger, never a live `balanceOf(address(this))`
 read, for the USDC portion. An unsolicited direct transfer sits as unaccounted
 dust, it never moves share price for existing depositors, until governance
-explicitly sweeps it through a defined, timelocked function (Phase 2 detail;
-the "never trust live balanceOf for USDC" rule is decided now, in Phase 1).
+explicitly sweeps it (see `sweepDust` below; the "never trust live balanceOf
+for USDC" rule is decided now, in Phase 1, `sweepDust`'s exact shape is a
+Phase 2 detail).
+
+**`proposeSweepDust(asset_, to)` / `executeSweepDust(asset_)`, the propose
+step gated to `GOVERNANCE_ROLE`, behind the same 48h timelock as the router
+allowlist, cancellable by `PAUSER_ROLE` via `cancelSweepDust`.** The swept
+amount is mathematically bounded to the unaccounted excess
+(`dust = balanceOf(vault) - ledger[asset_]`, frozen at propose time, never
+recomputed at execution), so it can never reduce the vault's real balance
+below what the ledger records, meaning a compromised or mistaken
+`GOVERNANCE` key can only ever misdirect accidental donations, never
+depositor capital. That bound alone does not justify skipping a timelock,
+though: someone who accidentally sends a large direct transfer to the vault
+(bypassing `deposit()`) also counts as "dust" under this definition, and
+deserves a real window to notice and ask for it back before it moves
+anywhere, exactly the same reasoning already applied to the router
+allowlist. `executeSweepDust` is permissionless once ready, same "anyone can
+finalize, the contract enforces the real condition" pattern used throughout.
+Reverts if there is no dust to propose (`live <= ledger`). This is the one
+place `MandateVault` ever reads a live `balanceOf`. Proven with dedicated
+fuzz tests in `test/MandateVault.t.sol`
+(`testFuzz_sweepDustNeverReducesBalanceBelowLedger`,
+`testFuzz_sweepDustNeverExecutesBeforeTimelockElapses`,
+`testFuzz_pauserCanCancelPendingSweepAtAnyPointBeforeExecution`, among
+others).
 
 **Zero-address transfer reverts apply identically on both interfaces,
 verified live.** Simulated a transfer to `address(0)` on the ERC-20 interface:
@@ -254,26 +278,65 @@ added without the same isolate-and-tolerate treatment.
 Deposit caps (progressive-trust tiers, e.g. 500 -> 1,000 -> 5,000 -> 10,000)
 genuinely need to move over time as a vault proves itself. Baking them into
 the immutable policy would force a redeploy every time a cap increases. They
-live in a separate `CapitalLimitRegistry.sol`, mutable only by `GOVERNANCE`
-behind a timelock.
+live in a separate `CapitalLimitRegistry.sol`, consulted by `MandateVault`'s
+`maxDeposit` via `_capByRegistry`.
+
+**What's actually built in Phase 2 is a deliberately minimal stub, not the
+full picture above.** `CapitalLimitRegistry.sol` holds one
+`maxTotalAssetsValue`, applied identically to every vault, `VaultFactory`
+wires it into every new vault right after the atomic seed deposit so a cap
+is enforced from the vault's very first possible deposit, no separate manual
+step. Progressive, per-vault, reputation-based tiers (the
+`500 -> 1,000 -> 5,000 -> 10,000` example above) are Phase 4 work; Phase 2
+only needed "new vaults start with low capital limits" to be a real,
+enforced property, not just a documented plan, since Phase 2 already
+involves real testnet deposits.
+
+**Raising this cap is not risk-free the way lowering it is.** Raising it is
+the exact action progressive trust is meant to gate. Today the blast radius
+is limited (one global value, not yet targetable at a specific vault), but
+Phase 4's per-vault differentiated caps turn an instant, undelayed increase
+into a real, targeted attack surface. So `CapitalLimitRegistry.sol` has its
+own self-contained, contract-enforced 48h timelock
+(`proposeMaxTotalAssets`/`executeMaxTotalAssets`, `ADMIN`-gated to propose,
+permissionless to execute once ready, cancellable by `PAUSER_ROLE`), the
+same recipe already built and tested for the router allowlist and
+`sweepDust`, applied here to a third parameter rather than invented fresh.
+This was a deliberate choice over just relying on the general
+"`GOVERNANCE_ROLE`/`ADMIN_ROLE` happens to be held by a real
+`TimelockController`" convention (see below): that convention is
+unverifiable by the contract itself, if the role were ever assigned to a
+plain multisig with no delay by mistake, nothing in the code would catch it.
+Applies symmetrically to increases and decreases, same treatment already
+chosen for the router allowlist (removing a router isn't treated as urgent
+enough to skip the delay either).
 
 **Roles** (least privilege): `ADMIN` (team multisig, create vaults, grant/
-revoke roles), `PAUSER` (small multisig, e.g. Randy + brother, pause/unpause
-per vault, never touches policy limits or withdrawals), `KEEPER` (the
+revoke roles, propose `CapitalLimitRegistry` cap changes, see above),
+`PAUSER` (small multisig, e.g. Randy + brother, pause/unpause per vault,
+cancel a pending router change, dust sweep, or capital-limit change during
+its timelock, never touches policy limits or withdrawals), `KEEPER` (the
 executor service's onchain identity, can only call `executeDecision`,
 nothing else), `GOVERNANCE` (team multisig behind a timelock, the narrow set
 of parameters that legitimately change over time: oracle feed address, DEX
 router allowlist (its own dedicated code-enforced timelock, see below),
-capital limit registry values, `autoPauseBountyAmount`; cannot touch
+`autoPauseBountyAmount`, and can also swap `MandateVault`'s
+`capitalLimitRegistry` pointer to a future, smarter registry; cannot touch
 `VaultPolicy`'s immutable limits, because they're immutable).
 
 **Concrete timelock duration: 48 hours minimum for anything touching
 fund-safety-relevant parameters**, matching the common DeFi standard
 (Compound and Aave both use timelocks in this range). For most such
-parameters (the future `OracleRegistry`/`CapitalLimitRegistry`), this is not
-yet a deployed constraint, it is achieved entirely by which address is
-actually granted `GOVERNANCE_ROLE`. That address must be an OpenZeppelin
-`TimelockController` (already installed,
+parameters (the future `OracleRegistry`, and `GOVERNANCE`'s ability to swap
+`capitalLimitRegistry` to a different registry), this is not yet a deployed
+constraint, it is achieved entirely by which address is actually granted
+`GOVERNANCE_ROLE`. The router allowlist, `sweepDust`, and
+`CapitalLimitRegistry`'s cap value are the three deliberate exceptions: each
+gets its own self-contained, contract-enforced timelock instead, since each
+was judged severe enough (fund redirection, fund misdirection, and a
+targeted capital-authority escalation once Phase 4 lands, respectively) to
+not rely solely on deployment configuration. That address must be an
+OpenZeppelin `TimelockController` (already installed,
 `node_modules/@openzeppelin/contracts/governance/TimelockController.sol`)
 deployed with `minDelay = 48 hours`, never an EOA or a plain multisig with
 no delay, once real capital is at stake. Documented here as the concrete
@@ -333,8 +396,14 @@ is built.
 
 **Upgradability**: `VaultPolicy` and `VaultFactory` immutable. `MandateVault`
 immutable per instance (a new strategy version is a new Vault+Policy pair, not
-an upgrade). `VaultRegistry` a simple mutable append-only registry, owned by
-`ADMIN`. `CapitalLimitRegistry` mutable, `GOVERNANCE` + timelock only.
+an upgrade). `VaultRegistry.sol`, a simple mutable append-only registry
+owned by `ADMIN`, is deferred to Phase 4 (see "Why Agent Studio isn't
+designed here" below), its main responsibility, a canonical on-chain vault
+list, is already covered today by `VaultFactory`'s own `allVaults`/
+`isMandateVault`. `CapitalLimitRegistry.sol` is built now, in its minimal
+Phase 2 form, its cap value proposed by `ADMIN` behind its own 48h timelock,
+cancellable by `PAUSER` (see "Capital limits are deliberately not part of
+the immutable policy" above).
 
 **Real deployment sequence, discovered while implementing `VaultFactory`
 (not part of the original plan, added here so it is not lost).**
@@ -400,6 +469,15 @@ Confirmed, and made explicit here so neither is accidentally assumed away:
   this and accidentally carry trust over.
 
 ## Why Agent Studio isn't designed here, and why that's safe to leave open
+
+**Explicitly deferred to Phase 4, confirmed here so it doesn't recur as an
+open question: `VaultRegistry.sol` itself is not built.** Its main other
+responsibility, a canonical on-chain vault list, is already covered by
+`VaultFactory`'s own `allVaults`/`isMandateVault` (built in Phase 2). The
+only piece genuinely missing is on-chain `strategyAuthor` metadata, and it
+has no practical effect while the team is the sole vault creator (there is
+nobody else's authorship to attribute or forge yet), so it is safe to leave
+for Phase 4 rather than a Phase 2 blocker.
 
 Even though public vault creation is cut from the roadmap, the future
 `VaultRegistry.sol`'s `strategyAuthor` field (today only an off-chain TS type

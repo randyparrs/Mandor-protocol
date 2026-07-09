@@ -8,6 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IVaultPolicy, IAutoPausePayer} from "./interfaces/IVaultPolicy.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
+import {ICapitalLimitRegistry} from "./interfaces/ICapitalLimitRegistry.sol";
 
 /// @notice The ERC-4626 vault that actually custodies funds. Deposits/mints
 /// are gated by VaultPolicy's pause state; withdrawals/redeems never are,
@@ -50,8 +51,10 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     mapping(address asset => uint256 priceUSDC) public lastKnownPriceUSDC;
 
     mapping(address router => bool allowed) public allowedRouters;
-    /// @dev Reserved hook only, unused until a future CapitalLimitRegistry
-    /// exists. Left at address(0) means uncapped.
+    /// @dev Consulted by maxDeposit via _capByRegistry, see
+    /// contracts/CapitalLimitRegistry.sol. Left at address(0) means
+    /// uncapped, but VaultFactory.createVault always wires this at creation
+    /// time, so an uncapped vault should never occur in practice.
     address public capitalLimitRegistry;
 
     /// @dev Self-contained timelock for router allowlist changes only, see
@@ -63,6 +66,22 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     uint256 public constant ROUTER_CHANGE_TIMELOCK = 48 hours;
     mapping(address router => uint256 executableAt) public routerChangeExecutableAt;
     mapping(address router => bool pendingAllowed) public pendingRouterChange;
+
+    /// @dev sweepDust moves real, unaccounted-excess funds (not just a
+    /// config flag like the router allowlist), so unlike a bare instant
+    /// sweep, it goes through the same propose/execute/cancel shape as
+    /// router allowlist changes: someone who accidentally sends a large
+    /// transfer directly to the vault (bypassing deposit()) still counts as
+    /// "dust" under this definition, and deserves a real window to notice
+    /// and ask for it back before GOVERNANCE can move it, not an instant,
+    /// no-recourse sweep. See proposeSweepDust/executeSweepDust below.
+    uint256 public constant SWEEP_DUST_TIMELOCK = 48 hours;
+    struct PendingSweep {
+        address to;
+        uint256 amount;
+        uint256 executableAt;
+    }
+    mapping(address asset => PendingSweep) public pendingSweep;
 
     /// @dev Deliberately mutable, unlike everything in VaultPolicy: this is
     /// an economic incentive to keep checkAndAutoPause's permissionless
@@ -112,6 +131,8 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     event RouterChangeProposed(address indexed router, bool allowed, uint256 executableAt);
     event RouterChangeCancelled(address indexed router, address indexed cancelledBy);
     event CapitalLimitRegistrySet(address indexed registry);
+    event SweepDustProposed(address indexed asset, address indexed to, uint256 amount, uint256 executableAt);
+    event SweepDustCancelled(address indexed asset, address indexed cancelledBy);
     event DustSwept(address indexed asset, address indexed to, uint256 amount);
     event AutoPauseBountyAmountSet(uint256 amount);
     event AutoPauseBountyPaid(address indexed to, uint256 amount);
@@ -131,6 +152,8 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     error BountyAmountExceedsCap(uint256 amount, uint256 cap);
     error RouterChangeNotReady(uint256 executableAt);
     error NoPendingRouterChange(address router);
+    error SweepNotReady(uint256 executableAt);
+    error NoPendingSweep(address asset);
 
     modifier onlyFactory() {
         if (msg.sender != factory) revert NotFactory();
@@ -254,9 +277,10 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
 
     function _capByRegistry(uint256 max) internal view returns (uint256) {
         if (capitalLimitRegistry == address(0)) return max;
-        // Reserved hook: a future CapitalLimitRegistry would be consulted
-        // here. Left as a pass-through until that contract exists.
-        return max;
+        uint256 registryMax = ICapitalLimitRegistry(capitalLimitRegistry).maxTotalAssets(address(this));
+        uint256 currentAssets = totalAssets();
+        uint256 room = registryMax > currentAssets ? registryMax - currentAssets : 0;
+        return room < max ? room : max;
     }
 
     // ---------------------------------------------------------------------
@@ -484,7 +508,15 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
         emit RouterChangeCancelled(router, msg.sender);
     }
 
-    function setCapitalLimitRegistry(address registry) external onlyGovernance {
+    /// @notice Callable by the factory (once, at vault creation, so the cap
+    /// is enforced from the very first block a vault could be deposited
+    /// into, no separate manual step to forget) or by GOVERNANCE afterwards
+    /// (so a future, smarter registry, e.g. Phase 4's reputation-based
+    /// scoring, can be swapped in without redeploying the vault).
+    function setCapitalLimitRegistry(address registry) external {
+        if (msg.sender != factory && !IAccessControl(roles).hasRole(GOVERNANCE_ROLE, msg.sender)) {
+            revert NotGovernance();
+        }
         capitalLimitRegistry = registry;
         emit CapitalLimitRegistrySet(registry);
     }
@@ -507,16 +539,48 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
         emit AutoPauseBountyAmountSet(amount);
     }
 
-    /// @notice The one place this contract ever reads a live balanceOf. Can
-    /// only ever move the unaccounted excess above the ledger, never
-    /// ledgered funds, so it is safe despite reading a live balance.
-    function sweepDust(address asset_, address to) external onlyGovernance nonReentrant {
+    /// @notice Step 1 of 2. The one place this contract ever reads a live
+    /// balanceOf. The swept amount can only ever be the unaccounted excess
+    /// above the ledger, never ledgered depositor funds, that bound is what
+    /// makes reading a live balance here safe at all. It is frozen at the
+    /// amount observed now; a later executeSweepDust call transfers exactly
+    /// this amount, never a value recomputed at execution time, matching how
+    /// proposeRouterAllowed/executeRouterAllowed freezes its proposal.
+    function proposeSweepDust(address asset_, address to) external onlyGovernance {
         uint256 live = IERC20(asset_).balanceOf(address(this));
         uint256 accounted = _ledger[asset_];
         if (live <= accounted) revert NoDust();
         uint256 dust = live - accounted;
-        IERC20(asset_).safeTransfer(to, dust);
-        emit DustSwept(asset_, to, dust);
+        uint256 executableAt = block.timestamp + SWEEP_DUST_TIMELOCK;
+        pendingSweep[asset_] = PendingSweep({to: to, amount: dust, executableAt: executableAt});
+        emit SweepDustProposed(asset_, to, dust, executableAt);
+    }
+
+    /// @notice Step 2 of 2. Permissionless once the timelock has elapsed,
+    /// same "anyone can finalize, the contract enforces the real condition"
+    /// pattern as executeRouterAllowed and checkAndAutoPause.
+    function executeSweepDust(address asset_) external nonReentrant {
+        PendingSweep memory pending = pendingSweep[asset_];
+        if (pending.executableAt == 0 || block.timestamp < pending.executableAt) {
+            revert SweepNotReady(pending.executableAt);
+        }
+        delete pendingSweep[asset_];
+        IERC20(asset_).safeTransfer(pending.to, pending.amount);
+        emit DustSwept(asset_, pending.to, pending.amount);
+    }
+
+    /// @notice A large accidental direct transfer to the vault (bypassing
+    /// deposit()) also counts as dust under this definition, and its sender
+    /// deserves a real window to notice and ask for it back before it moves
+    /// anywhere, not an instant, no-recourse sweep. Gated to PAUSER_ROLE,
+    /// same reasoning and same role as cancelRouterAllowedChange: a
+    /// different role than the GOVERNANCE_ROLE that proposes, so the team
+    /// can actually stop a pending sweep during the delay, not just watch it
+    /// count down.
+    function cancelSweepDust(address asset_) external onlyPauser {
+        if (pendingSweep[asset_].executableAt == 0) revert NoPendingSweep(asset_);
+        delete pendingSweep[asset_];
+        emit SweepDustCancelled(asset_, msg.sender);
     }
 
     // ---------------------------------------------------------------------
