@@ -63,13 +63,13 @@ contract MandateVaultTest is Test {
                 oracleMaxDeviationBps: 500,
                 maxDrawdownSpeedBpsPerWindow: 300,
                 drawdownSpeedWindowSeconds: 3600,
-                autoPauseBountyAmount: AUTO_PAUSE_BOUNTY,
                 assets: assets,
                 maxAllocationBps: maxBps,
                 stableAssets: stableAssets
             })
         );
         vault.setPolicy(address(policy));
+        vault.setAutoPauseBountyAmount(AUTO_PAUSE_BOUNTY);
     }
 
     function _deposit(address user, uint256 amount) internal {
@@ -201,20 +201,53 @@ contract MandateVaultTest is Test {
         assertTrue(ok);
     }
 
-    function testFuzz_bountyPayoutOnlyCallableByConfiguredPolicy(address caller, uint256 amount) public {
+    function testFuzz_bountyPayoutOnlyCallableByConfiguredPolicy(address caller) public {
         vm.assume(caller != address(policy));
         vm.prank(caller);
         vm.expectRevert();
-        vault.payAutoPauseBounty(user1, amount);
+        vault.payAutoPauseBounty(user1);
     }
 
-    /// @dev Even the real policy contract cannot pay out any amount other
-    /// than its own configured autoPauseBountyAmount.
-    function testFuzz_bountyPayoutNeverExceedsConfiguredAmount(uint256 attemptedAmount) public {
-        vm.assume(attemptedAmount != AUTO_PAUSE_BOUNTY);
+    /// @dev The vault decides the amount itself (its own current
+    /// autoPauseBountyAmount, GOVERNANCE-adjustable), there is no
+    /// caller-supplied figure to spoof anymore, this is the whole point of
+    /// removing that parameter. Whatever the current configured amount is,
+    /// a real payout must move exactly that much, no more, no less.
+    function testFuzz_payoutAlwaysMovesExactlyTheCurrentConfiguredAmount(uint256 depositAmount, uint256 bountyAmount)
+        public
+    {
+        bountyAmount = bound(bountyAmount, 1, 1e21);
+        depositAmount = bound(depositAmount, bountyAmount, 1e30);
+        vault.setAutoPauseBountyAmount(bountyAmount);
+        _deposit(user1, depositAmount);
+
+        uint256 ledgerBefore = vault.ledgerOf(address(usdc));
         vm.prank(address(policy));
+        vault.payAutoPauseBounty(user1);
+
+        assertEq(vault.ledgerOf(address(usdc)), ledgerBefore - bountyAmount);
+        assertEq(usdc.balanceOf(user1), bountyAmount);
+    }
+
+    /// @dev A bounty amount of 0 (the default until GOVERNANCE opts in) is
+    /// a silent no-op, never a revert, so an operator who hasn't configured
+    /// a bounty yet doesn't turn every real auto-pause into a failed call.
+    /// setUp() already configures a nonzero bounty for the rest of this
+    /// file's tests, so this test explicitly resets to 0 first rather than
+    /// assuming a fresh-deploy default.
+    function test_payoutIsNoOpWhenBountyAmountIsZero() public {
+        vault.setAutoPauseBountyAmount(0);
+        uint256 ledgerBefore = vault.ledgerOf(address(usdc));
+        vm.prank(address(policy));
+        vault.payAutoPauseBounty(user1);
+        assertEq(vault.ledgerOf(address(usdc)), ledgerBefore);
+    }
+
+    function testFuzz_onlyGovernanceCanSetAutoPauseBountyAmount(address caller, uint256 amount) public {
+        vm.assume(caller != address(this));
+        vm.prank(caller);
         vm.expectRevert();
-        vault.payAutoPauseBounty(user1, attemptedAmount);
+        vault.setAutoPauseBountyAmount(amount);
     }
 
     /// @dev Light invariant check: the vault's own ledger for an asset can

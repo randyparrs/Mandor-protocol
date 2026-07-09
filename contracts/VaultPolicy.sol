@@ -51,7 +51,11 @@ contract VaultPolicy is IVaultPolicy {
 
     uint256 public immutable maxDrawdownSpeedBpsPerWindow;
     uint256 public immutable drawdownSpeedWindowSeconds;
-    uint256 public immutable autoPauseBountyAmount;
+    // No autoPauseBountyAmount here on purpose: the bounty is an economic
+    // incentive, not a risk limit, so unlike everything else in this
+    // contract it may need to move over time (gas costs, USDC value
+    // context). It lives as a GOVERNANCE-adjustable value on MandateVault
+    // instead. See IAutoPausePayer in interfaces/IVaultPolicy.sol.
 
     /// @dev Set once in the constructor. No setter exists anywhere in this
     /// contract, loosening a limit always means deploying a new
@@ -64,8 +68,9 @@ contract VaultPolicy is IVaultPolicy {
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event AutoPaused(address indexed triggeredBy, bytes32 code);
-    event AutoPauseBountyPaid(address indexed to, uint256 amount);
-    event AutoPauseBountyFailed(address indexed to, uint256 amount);
+    // No amount here, VaultPolicy no longer knows it. MandateVault emits
+    // its own AutoPauseBountyPaid event with the real amount actually paid.
+    event AutoPauseBountyCallFailed(address indexed to);
 
     struct ConstructorLimits {
         address vault;
@@ -77,7 +82,6 @@ contract VaultPolicy is IVaultPolicy {
         uint256 oracleMaxDeviationBps;
         uint256 maxDrawdownSpeedBpsPerWindow;
         uint256 drawdownSpeedWindowSeconds;
-        uint256 autoPauseBountyAmount;
         address[] assets;
         uint256[] maxAllocationBps;
         address[] stableAssets;
@@ -97,7 +101,6 @@ contract VaultPolicy is IVaultPolicy {
         oracleMaxDeviationBps = limits.oracleMaxDeviationBps;
         maxDrawdownSpeedBpsPerWindow = limits.maxDrawdownSpeedBpsPerWindow;
         drawdownSpeedWindowSeconds = limits.drawdownSpeedWindowSeconds;
-        autoPauseBountyAmount = limits.autoPauseBountyAmount;
 
         for (uint256 i = 0; i < limits.assets.length; i++) {
             maxAllocationBpsPerAsset[limits.assets[i]] = limits.maxAllocationBps[i];
@@ -192,8 +195,11 @@ contract VaultPolicy is IVaultPolicy {
     /// @notice Permissionless, anyone can call this, mirroring the
     /// permissionless-escalation pattern already proven in P2PMarket.sol's
     /// expire(). Only actually pauses if an objective condition is true.
-    /// Pays autoPauseBountyAmount to whoever's call triggers the pause, so
-    /// the mechanism stays real even if the team's own watcher bot is down.
+    /// Triggers MandateVault's bounty payout to whoever's call triggers the
+    /// pause, so the mechanism stays real even if the team's own watcher
+    /// bot is down. This contract never decides or knows the amount, that
+    /// is MandateVault's own GOVERNANCE-adjustable value, see
+    /// IAutoPausePayer in interfaces/IVaultPolicy.sol for why.
     /// @dev No ReentrancyGuard here, deliberately, not an oversight: this
     /// contract never holds funds, so there is nothing here for a
     /// reentrant call to drain. The only state this function mutates is
@@ -217,20 +223,17 @@ contract VaultPolicy is IVaultPolicy {
         paused = true;
         emit AutoPaused(msg.sender, code);
 
-        if (autoPauseBountyAmount > 0) {
-            // A failed payout (e.g. the caller is somehow an address the
-            // vault's asset refuses, per the live-verified zero-address
-            // revert behavior) must never undo the pause. Emitting an event
-            // in each branch also lets the monitoring/indexer track failed
-            // payouts (see docs/threat-model.md) instead of them vanishing
-            // silently.
-            try IAutoPausePayer(vault).payAutoPauseBounty(msg.sender, autoPauseBountyAmount) {
-                emit AutoPauseBountyPaid(msg.sender, autoPauseBountyAmount);
-            } catch Error(string memory) {
-                emit AutoPauseBountyFailed(msg.sender, autoPauseBountyAmount);
-            } catch (bytes memory) {
-                emit AutoPauseBountyFailed(msg.sender, autoPauseBountyAmount);
-            }
+        // A failed payout (e.g. the caller is somehow an address the
+        // vault's asset refuses, per the live-verified zero-address revert
+        // behavior, or MandateVault's own current bounty amount is 0) must
+        // never undo the pause. Emitting an event on failure also lets the
+        // monitoring/indexer track it (see docs/threat-model.md) instead of
+        // it vanishing silently. MandateVault emits its own event on
+        // success, since it is the only contract that knows the amount.
+        try IAutoPausePayer(vault).payAutoPauseBounty(msg.sender) {} catch Error(string memory) {
+            emit AutoPauseBountyCallFailed(msg.sender);
+        } catch (bytes memory) {
+            emit AutoPauseBountyCallFailed(msg.sender);
         }
 
         return (true, code);

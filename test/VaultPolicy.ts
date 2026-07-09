@@ -25,7 +25,6 @@ function defaultLimits(overrides: Record<string, unknown> = {}) {
     oracleMaxDeviationBps: 500n, // 5%
     maxDrawdownSpeedBpsPerWindow: 300n, // 3%
     drawdownSpeedWindowSeconds: BigInt(HOUR),
-    autoPauseBountyAmount: 10n,
     assets: [USDC, EURC],
     maxAllocationBps: [10000n, 5000n],
     stableAssets: [USDC],

@@ -63,9 +63,16 @@ interface IVaultPolicy {
     function paused() external view returns (bool);
 }
 
-/// @notice The one function MandateVault must expose so VaultPolicy can pay
-/// the auto-pause bounty out of the vault's own assets. VaultPolicy never
-/// holds vault funds itself; it only calls back into its own trusted vault.
+/// @notice The one function MandateVault must expose so VaultPolicy can
+/// trigger the auto-pause bounty payout out of the vault's own assets.
+/// VaultPolicy never holds vault funds itself; it only calls back into its
+/// own trusted vault. Deliberately no `amount` parameter: the bounty is an
+/// economic incentive, not a risk limit, so unlike every other value in
+/// VaultPolicy it may need to adjust over time (gas costs, USDC value
+/// context). MandateVault owns and decides the current amount itself
+/// (a plain GOVERNANCE-adjustable value, see MandateVault.sol), VaultPolicy
+/// only ever triggers the callback, it never dictates or even knows the
+/// figure.
 interface IAutoPausePayer {
-    function payAutoPauseBounty(address to, uint256 amount) external;
+    function payAutoPauseBounty(address to) external;
 }

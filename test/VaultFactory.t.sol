@@ -64,7 +64,6 @@ contract VaultFactoryTest is Test {
                 oracleMaxDeviationBps: 500,
                 maxDrawdownSpeedBpsPerWindow: 300,
                 drawdownSpeedWindowSeconds: 3600,
-                autoPauseBountyAmount: 0,
                 assets: assets,
                 maxAllocationBps: maxBps,
                 stableAssets: stableAssets

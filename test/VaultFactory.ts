@@ -18,7 +18,6 @@ function policyLimits(overrides: Record<string, unknown> = {}) {
     oracleMaxDeviationBps: 500n,
     maxDrawdownSpeedBpsPerWindow: 300n,
     drawdownSpeedWindowSeconds: BigInt(HOUR),
-    autoPauseBountyAmount: 0n,
     assets: [] as `0x${string}`[],
     maxAllocationBps: [] as bigint[],
     stableAssets: [] as `0x${string}`[],

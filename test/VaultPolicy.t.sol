@@ -46,7 +46,6 @@ contract VaultPolicyTest is Test {
             oracleMaxDeviationBps: 500,
             maxDrawdownSpeedBpsPerWindow: 300,
             drawdownSpeedWindowSeconds: 3600,
-            autoPauseBountyAmount: 10,
             assets: assets,
             maxAllocationBps: maxBps,
             stableAssets: stableAssets

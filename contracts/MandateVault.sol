@@ -7,7 +7,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IVaultPolicy, IAutoPausePayer} from "./interfaces/IVaultPolicy.sol";
-import {VaultPolicy} from "./VaultPolicy.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 
 /// @notice The ERC-4626 vault that actually custodies funds. Deposits/mints
@@ -54,6 +53,15 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     /// exists. Left at address(0) means uncapped.
     address public capitalLimitRegistry;
 
+    /// @dev Deliberately mutable, unlike everything in VaultPolicy: this is
+    /// an economic incentive to keep checkAndAutoPause's permissionless
+    /// path real, not a risk limit, so it needs to track gas costs and
+    /// USDC value context over time. GOVERNANCE-adjustable (in practice,
+    /// behind the same 48h timelock convention documented in
+    /// docs/architecture.md for anything fund-safety-relevant), never
+    /// touched by VaultPolicy, which only ever triggers the callback.
+    uint256 public autoPauseBountyAmount;
+
     uint256 public tradesToday;
     uint256 public tradeDayStart;
     uint256 public highWaterMarkUSDC;
@@ -82,6 +90,8 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     event RouterAllowedSet(address indexed router, bool allowed);
     event CapitalLimitRegistrySet(address indexed registry);
     event DustSwept(address indexed asset, address indexed to, uint256 amount);
+    event AutoPauseBountyAmountSet(uint256 amount);
+    event AutoPauseBountyPaid(address indexed to, uint256 amount);
 
     error PolicyAlreadySet();
     error NotFactory();
@@ -94,7 +104,6 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     error InsufficientSwapOutput(uint256 amountOut, uint256 minAmountOut);
     error UnregisteredAsset(address asset);
     error NoDust();
-    error BountyAmountMismatch(uint256 amount, uint256 expected);
 
     modifier onlyFactory() {
         if (msg.sender != factory) revert NotFactory();
@@ -127,6 +136,10 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
         // be authorized to call setPolicy below.
         factory = factory_;
         roles = roles_;
+        // Defaults to 0 (no bounty, checkAndAutoPause callers get paid
+        // nothing) until GOVERNANCE explicitly sets a real value via
+        // setAutoPauseBountyAmount, same pattern as capitalLimitRegistry
+        // defaulting to address(0) until governance opts in.
 
         _registerAsset(address(usdc_));
         for (uint256 i = 0; i < otherAssets_.length; i++) {
@@ -353,19 +366,23 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     // ---------------------------------------------------------------------
 
     /// @notice The only function VaultPolicy's checkAndAutoPause calls back
-    /// into. Restricted to the configured policy address, and the amount is
-    /// re-checked against VaultPolicy's own configured autoPauseBountyAmount
-    /// so this function can never be tricked into paying more than the one
-    /// configured amount even in principle. Guarded by nonReentrant since,
-    /// unlike VaultPolicy (which holds no funds), this function actually
-    /// moves them.
-    function payAutoPauseBounty(address to, uint256 amount) external nonReentrant {
+    /// into. Restricted to the configured policy address. This contract
+    /// decides the amount itself (autoPauseBountyAmount, mutable, see its
+    /// declaration above) rather than trusting a caller-supplied figure,
+    /// so it can never be tricked into paying more than its own current
+    /// configured amount even in principle. Pays nothing (a silent no-op,
+    /// not a revert) if the current amount is 0, so an operator who hasn't
+    /// opted into a bounty yet doesn't turn every auto-pause into a failed
+    /// call. Guarded by nonReentrant since, unlike VaultPolicy (which holds
+    /// no funds), this function actually moves them.
+    function payAutoPauseBounty(address to) external nonReentrant {
         if (msg.sender != policy) revert NotPolicy();
-        uint256 expected = VaultPolicy(policy).autoPauseBountyAmount();
-        if (amount != expected) revert BountyAmountMismatch(amount, expected);
+        uint256 amount = autoPauseBountyAmount;
+        if (amount == 0) return;
 
         _ledger[asset()] -= amount;
         IERC20(asset()).safeTransfer(to, amount);
+        emit AutoPauseBountyPaid(to, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -380,6 +397,18 @@ contract MandateVault is ERC4626, IAutoPausePayer, ReentrancyGuard {
     function setCapitalLimitRegistry(address registry) external onlyGovernance {
         capitalLimitRegistry = registry;
         emit CapitalLimitRegistrySet(registry);
+    }
+
+    /// @notice The bounty is an economic incentive, not a risk limit, so
+    /// unlike everything in VaultPolicy it is deliberately adjustable, to
+    /// track gas costs and USDC value context over time. No hard cap
+    /// enforced in code; GOVERNANCE is expected to keep it small relative
+    /// to the loss a timely pause prevents, and in practice this action
+    /// should go through the same 48h-timelock convention documented in
+    /// docs/architecture.md for fund-safety-relevant parameters.
+    function setAutoPauseBountyAmount(uint256 amount) external onlyGovernance {
+        autoPauseBountyAmount = amount;
+        emit AutoPauseBountyAmountSet(amount);
     }
 
     /// @notice The one place this contract ever reads a live balanceOf. Can

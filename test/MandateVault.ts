@@ -23,7 +23,6 @@ function policyLimits(overrides: Record<string, unknown> = {}) {
     oracleMaxDeviationBps: 500n,
     maxDrawdownSpeedBpsPerWindow: 300n,
     drawdownSpeedWindowSeconds: BigInt(HOUR),
-    autoPauseBountyAmount: 0n,
     assets: [] as `0x${string}`[],
     maxAllocationBps: [] as bigint[],
     stableAssets: [] as `0x${string}`[],
@@ -250,7 +249,15 @@ describe("MandateVault", () => {
 
   it("payAutoPauseBounty reverts for any caller other than the configured policy", async () => {
     const { vault, other, user1 } = await setup();
-    await assert.rejects(vault.write.payAutoPauseBounty([user1.account.address, 1n], { account: other.account }));
+    await assert.rejects(vault.write.payAutoPauseBounty([user1.account.address], { account: other.account }));
+  });
+
+  it("only GOVERNANCE_ROLE can set autoPauseBountyAmount, and it defaults to 0", async () => {
+    const { vault, governance, other } = await setup();
+    assert.equal(await vault.read.autoPauseBountyAmount(), 0n);
+    await assert.rejects(vault.write.setAutoPauseBountyAmount([1n], { account: other.account }));
+    await vault.write.setAutoPauseBountyAmount([5n], { account: governance.account });
+    assert.equal(await vault.read.autoPauseBountyAmount(), 5n);
   });
 
   it("setPolicy can only be called once, only by the factory", async () => {
@@ -260,7 +267,7 @@ describe("MandateVault", () => {
   });
 
   it("end-to-end: checkAndAutoPause triggers, the bounty lands, totalAssets decreases by exactly that amount", async () => {
-    const { viem, admin, roles, other, user1 } = await setup();
+    const { viem, admin, governance, roles, other, user1 } = await setup();
     // Fresh deploy with a nonzero bounty this time.
     const usdc = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 18]);
     const eurc = await viem.deployContract("MockERC20", ["Euro Coin", "EURC", 6]);
@@ -277,13 +284,13 @@ describe("MandateVault", () => {
     const limits = policyLimits({
       vault: vault.address,
       roles: roles.address,
-      autoPauseBountyAmount: parseUnits("1", 18),
       assets: [usdc.address, eurc.address],
       maxAllocationBps: [10_000n, 5_000n],
       stableAssets: [usdc.address],
     });
     const policy = await viem.deployContract("VaultPolicy", [limits]);
     await vault.write.setPolicy([policy.address], { account: admin.account });
+    await vault.write.setAutoPauseBountyAmount([parseUnits("1", 18)], { account: governance.account });
 
     await usdc.write.mint([user1.account.address, parseUnits("1000", 18)]);
     await usdc.write.approve([vault.address, parseUnits("1000", 18)], { account: user1.account });

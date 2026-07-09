@@ -130,10 +130,11 @@ protection. Two things make it real:
 1. A dedicated off-chain watcher bot (the same process already responsible
    for keeper health monitoring, see §Backend) calls `checkAndAutoPause` in a
    loop as the primary, reliable path.
-2. `checkAndAutoPause` also pays a small, fixed, capped bounty
-   (`autoPauseBountyAmount` in `PolicyLimits`, denominated in the vault's own
-   asset) to whoever's call actually triggers a pause, the same incentive
-   pattern lending protocols use to keep permissionless liquidations reliable.
+2. `checkAndAutoPause` also triggers a small, adjustable bounty payout
+   (`autoPauseBountyAmount`, owned by `MandateVault`, see below for why it
+   is not a `VaultPolicy` limit, denominated in the vault's own asset) to
+   whoever's call actually triggers a pause, the same incentive pattern
+   lending protocols use to keep permissionless liquidations reliable.
    The bounty is the backstop: if the team's bot is ever down, it's still
    worth a stranger's gas to call this, so the mechanism doesn't quietly
    depend on the team's own infrastructure staying up. The bounty is
@@ -142,14 +143,32 @@ protection. Two things make it real:
    rare occasion the trigger condition is genuinely true, never a recurring
    cost.
 
-**Recommended `autoPauseBountyAmount` starting value: 10 USDC** (`10e18`,
-matching Arc's 18-decimal native USDC). This is a per-vault constructor
-parameter, not hardcoded in the contract, so curators can tune it, but 10
-USDC is the suggested default: large enough to be worth a stranger's gas on
-Arc's cheap fee market, small enough to be a rounding error against the
-capital a timely pause protects. `checkAndAutoPause`'s `require(!paused)`
-guard is also what guarantees the bounty is paid at most once per genuine
-pause transition, not once per call, confirmed under repeated spam calls by
+**`autoPauseBountyAmount` lives on `MandateVault`, mutable, not on
+`VaultPolicy` as an immutable limit.** Raised as a genuine design question:
+risk limits (`maxDrawdownBps`, `maxAllocationBpsPerAsset`, and everything
+else in `VaultPolicy`) must stay immutable forever, since they define the
+vault's actual risk profile, changing them changes what the vault is. The
+bounty is different: it is an economic incentive to keep a permissionless
+mechanism reliable, not a risk limit, and it may need to move over time as
+gas costs or USDC's effective value context changes. So it is *not* part of
+`VaultPolicy.ConstructorLimits` at all. It lives as a plain
+`uint256 public autoPauseBountyAmount` on `MandateVault`, defaulting to `0`
+at deploy time, adjustable via `setAutoPauseBountyAmount`, gated by
+`GOVERNANCE_ROLE` (in practice, the same 48h-timelock convention as any
+other fund-safety-relevant parameter). `VaultPolicy.checkAndAutoPause` no
+longer knows or decides the amount at all, it only ever triggers
+`IAutoPausePayer.payAutoPauseBounty(address to)` (no amount parameter,
+removed on purpose so there is nothing left for a caller to spoof);
+`MandateVault` alone decides how much of its own funds to pay, using its own
+current value. Recommended starting value once GOVERNANCE opts in: 10 USDC
+(`10e18`), large enough to be worth a stranger's gas on Arc's cheap fee
+market, small enough to be a rounding error against the capital a timely
+pause protects. Paying nothing (amount `0`, the default) is a silent no-op,
+never a revert, so an operator who hasn't configured a bounty yet doesn't
+turn every real auto-pause into a failed call.
+`checkAndAutoPause`'s `require(!paused)` guard is what guarantees the bounty
+is paid at most once per genuine pause transition, not once per call,
+confirmed under repeated spam calls by
 `testFuzz_bountyPaidExactlyOncePerPauseTransition` in `test/VaultPolicy.t.sol`.
 
 **`MandateVault.sol`**, ERC-4626, with inflation-attack mitigation applied
