@@ -238,7 +238,16 @@ contract VaultPolicy is IVaultPolicy {
 
     function _evaluateAutoPause(VaultState calldata state) private view returns (bool triggered, bytes32 code) {
         for (uint256 i = 0; i < state.prices.length; i++) {
-            if (_deviationBps(state.prices[i].price, state.prices[i].referencePrice) > oracleMaxDeviationBps) {
+            AssetPrice calldata p = state.prices[i];
+            // Staleness must also trigger auto-pause, not just deviation.
+            // Without this, an oracle that simply stops updating (no new
+            // reading, so nothing to "deviate" from) would never
+            // proactively pause the vault, only silently block new trades
+            // one at a time through validateDecision's own staleness check.
+            if (block.timestamp > p.updatedAt && block.timestamp - p.updatedAt > oracleMaxStalenessSeconds) {
+                return (true, VIOLATION_ORACLE_STALE);
+            }
+            if (_deviationBps(p.price, p.referencePrice) > oracleMaxDeviationBps) {
                 return (true, VIOLATION_ORACLE_DEVIATION_EXCEEDED);
             }
         }

@@ -97,14 +97,31 @@ the permissionless-escalation pattern `P2PMarket.sol` already uses for
 `expire()`: anyone (or, in practice, an off-chain watcher calling it
 proactively) can call it, but it only actually pauses the vault if an
 objective, deterministic condition the contract itself checks is true,
-oracle deviation above `oracleMaxDeviationBps` at read time, or drawdown speed
-above a new immutable `maxDrawdownSpeedBpsPerWindow` within
-`drawdownSpeedWindowSeconds`. Because the check is permissionless and
+oracle deviation above `oracleMaxDeviationBps` at read time, oracle
+**staleness** above `oracleMaxStalenessSeconds` (added so a feed that simply
+stops updating, with nothing new to deviate from, still proactively pauses
+the vault instead of only blocking new trades one at a time through
+`validateDecision`), or drawdown speed above a new immutable
+`maxDrawdownSpeedBpsPerWindow` within `drawdownSpeedWindowSeconds`. Because the check is permissionless and
 purely deterministic, availability doesn't depend on any single bot staying
 up, anyone can trigger it once the condition is objectively true, the same
 way `expire()` doesn't depend on a privileged caller. The human `PAUSER` role
 remains for subjective cases an objective condition can't capture (e.g. "we
 don't trust this agent's behavior even though it's technically compliant").
+
+**Explicit Phase 1 decision: pause is the only fallback for a failed or
+stale single oracle source, stated here so it is not left implicit.**
+`AssetPrice` carries both `price` and `referencePrice` (see
+`IVaultPolicy.sol`), and the deviation check between them is a real, useful
+sanity check, but Phase 1 does not wire up two genuinely independent
+on-chain oracle sources. Both numbers are supplied by the same caller in the
+same call; nothing on-chain enforces `referencePrice` comes from a different
+provider than `price`. A true secondary source (e.g. a second Chainlink feed,
+or a TWAP computed on-chain) is deferred to whenever `OracleRegistry.sol` is
+built, the same deferral already used for feed address ownership. Until then,
+staleness and deviation checks plus pause (manual and automatic, both
+described above) are Phase 1's complete fallback story for a single oracle
+source failing. This is an intentional scope decision, not an oversight.
 
 **Permissionless only works if someone actually calls it, so this is a bot
 AND a bounty, not permissionless-ness alone.** A purely theoretical
@@ -124,6 +141,16 @@ protection. Two things make it real:
    only ever paid out of the specific vault that was actually paused, on the
    rare occasion the trigger condition is genuinely true, never a recurring
    cost.
+
+**Recommended `autoPauseBountyAmount` starting value: 10 USDC** (`10e18`,
+matching Arc's 18-decimal native USDC). This is a per-vault constructor
+parameter, not hardcoded in the contract, so curators can tune it, but 10
+USDC is the suggested default: large enough to be worth a stranger's gas on
+Arc's cheap fee market, small enough to be a rounding error against the
+capital a timely pause protects. `checkAndAutoPause`'s `require(!paused)`
+guard is also what guarantees the bounty is paid at most once per genuine
+pause transition, not once per call, confirmed under repeated spam calls by
+`testFuzz_bountyPaidExactlyOncePerPauseTransition` in `test/VaultPolicy.t.sol`.
 
 **`MandateVault.sol`**, ERC-4626, with inflation-attack mitigation applied
 twice over: OpenZeppelin's virtual-shares/assets mechanism, *explicitly
@@ -220,6 +247,20 @@ of parameters that legitimately change over time: oracle feed address, DEX
 router allowlist, capital limit registry values; cannot touch `VaultPolicy`'s
 immutable limits, because they're immutable).
 
+**Concrete timelock duration: 48 hours minimum for anything touching
+fund-safety-relevant parameters**, matching the common DeFi standard
+(Compound and Aave both use timelocks in this range). This is not yet a
+deployed constraint (`MandateVault.setRouterAllowed` and the future
+`OracleRegistry`/`CapitalLimitRegistry` are plain `onlyGovernance` today,
+with no timelock code of their own, per the "router timelocking is a
+deployment/ops decision, not vault code" note above), it is achieved
+entirely by which address is actually granted `GOVERNANCE_ROLE`. That
+address must be an OpenZeppelin `TimelockController` (already installed,
+`node_modules/@openzeppelin/contracts/governance/TimelockController.sol`)
+deployed with `minDelay = 48 hours`, never an EOA or a plain multisig with
+no delay, once real capital is at stake. Documented here as the concrete
+planned value so "a timelock" is not left as an undefined concept.
+
 **Oracle feed switches are validated against the outgoing feed's last price.**
 An oracle address change is a historically common DeFi attack vector (swap in
 a malicious or mispriced feed, then immediately exploit the gap). `GOVERNANCE`
@@ -312,14 +353,25 @@ Confirmed, and made explicit here so neither is accidentally assumed away:
 
 ## Why Agent Studio isn't designed here, and why that's safe to leave open
 
-Even though public vault creation is cut from the roadmap, `VaultRegistry`'s
-`strategyAuthor` field (see `shared/vault.ts`) is kept as a plain identifier
-rather than a hardcoded "always the team" assumption, and `agent/core`'s
-system prompt is always kept separate from any strategy-configuration text
-rather than string-concatenated together. Neither of these costs anything
-extra to build this way now, they're just not designed to assume something
-that happens to be true today (only the team authors vaults) will always be
-architecturally required.
+Even though public vault creation is cut from the roadmap, the future
+`VaultRegistry.sol`'s `strategyAuthor` field (today only an off-chain TS type
+in `shared/vault.ts`, `VaultRegistry.sol` itself is not built yet, see the
+"out of scope this round" note in `contracts/README.md`) is planned as a
+plain identifier rather than a hardcoded "always the team" assumption, and
+`agent/core`'s system prompt is always kept separate from any
+strategy-configuration text rather than string-concatenated together.
+Neither of these costs anything extra to build this way now, they're just
+not designed to assume something that happens to be true today (only the
+team authors vaults) will always be architecturally required.
+
+**Requirement for when `VaultRegistry.sol` is actually built (noted now so
+it is not forgotten): `strategyAuthor` must only ever be settable through
+the `ADMIN`-gated vault-creation flow in `VaultFactory`, with no separate
+setter function anywhere.** The same reasoning as `MandateVaultDeployer`'s
+own access-control fix applies here in advance: a `strategyAuthor` field
+that any other function could set or overwrite would let someone forge a
+vault's claimed authorship, and any future code trusting that field
+(reputation display, curator attribution, and so on) would be fooled.
 
 ## Backend: executor/keeper service
 

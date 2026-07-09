@@ -297,4 +297,114 @@ contract VaultPolicyTest is Test {
         vm.expectRevert();
         policy.pause();
     }
+
+    /// @dev A stale oracle reading must trigger auto-pause on its own, not
+    /// just block new trades one at a time through validateDecision. Without
+    /// this, an oracle that simply stops updating (nothing to "deviate"
+    /// from) would never proactively pause the vault.
+    function testFuzz_staleOracleTriggersAutoPause(uint256 staleness) public {
+        staleness = bound(staleness, 3601, 365 days); // oracleMaxStalenessSeconds = 3600
+        vm.warp(365 days);
+
+        IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](1);
+        prices[0] = IVaultPolicy.AssetPrice({
+            asset: USDC,
+            price: 100,
+            referencePrice: 100, // no deviation, isolates the staleness trigger
+            updatedAt: block.timestamp - staleness
+        });
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: new IVaultPolicy.AssetHolding[](0),
+            prices: prices
+        });
+
+        (bool triggered, bytes32 code) = policy.previewAutoPause(state);
+        assertTrue(triggered, "a stale oracle reading must trigger auto-pause on its own");
+        assertEq(code, policy.VIOLATION_ORACLE_STALE());
+    }
+
+    /// @dev Spam-calling checkAndAutoPause after the vault is already paused
+    /// must never pay the bounty more than once for the same pause
+    /// transition. require(!paused) at the top is what enforces this; this
+    /// test proves it holds under repeated calls, not just a single retry.
+    function testFuzz_bountyPaidExactlyOncePerPauseTransition(uint8 spamAttempts, address caller) public {
+        vm.assume(caller != address(0));
+        spamAttempts = uint8(bound(spamAttempts, 1, 20));
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 500,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: new IVaultPolicy.AssetHolding[](0),
+            prices: new IVaultPolicy.AssetPrice[](0)
+        });
+
+        vm.prank(caller);
+        policy.checkAndAutoPause(state);
+        assertEq(mockVault.payoutCallCount(), 1);
+
+        for (uint256 i = 0; i < spamAttempts; i++) {
+            vm.prank(caller);
+            (bool ok,) = address(policy).call(abi.encodeCall(VaultPolicy.checkAndAutoPause, (state)));
+            assertFalse(ok, "a spam call once already paused must revert");
+        }
+        assertEq(mockVault.payoutCallCount(), 1, "the bounty must never be paid more than once per pause transition");
+    }
+
+    /// @dev Combined adversarial scenario, not just staleness and deviation
+    /// tested in isolation: a price that is both stale (the feed stopped
+    /// updating) and, once it does report again, spiked far from its
+    /// reference. Both violations must be reported and the decision must
+    /// still be rejected, one condition must never mask the other.
+    function test_staleThenSpikedOracle_rejectsWithBothViolations() public {
+        vm.warp(365 days);
+        uint256 referencePrice = 100e18;
+        uint256 spikedPrice = referencePrice * 2; // 100% deviation, far past the 5% limit
+
+        IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](1);
+        prices[0] = IVaultPolicy.AssetPrice({
+            asset: USDC,
+            price: spikedPrice,
+            referencePrice: referencePrice,
+            updatedAt: block.timestamp - 7200 // stale: exceeds the 3600s limit
+        });
+
+        IVaultPolicy.AssetHolding[] memory holdings = new IVaultPolicy.AssetHolding[](1);
+        holdings[0] = IVaultPolicy.AssetHolding({asset: USDC, currentAllocationBps: 10_000});
+
+        IVaultPolicy.VaultState memory state = IVaultPolicy.VaultState({
+            currentDrawdownBps: 0,
+            drawdownBpsAtWindowStart: 0,
+            tradesToday: 0,
+            currentHoldings: holdings,
+            prices: prices
+        });
+
+        (bool passed, bytes32[] memory codes) = policy.validateDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.HOLD,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            }),
+            state
+        );
+
+        assertFalse(passed, "a decision must never pass when the oracle is both stale and spiked");
+        bool sawStale;
+        bool sawDeviation;
+        for (uint256 i = 0; i < codes.length; i++) {
+            if (codes[i] == policy.VIOLATION_ORACLE_STALE()) sawStale = true;
+            if (codes[i] == policy.VIOLATION_ORACLE_DEVIATION_EXCEEDED()) sawDeviation = true;
+        }
+        assertTrue(sawStale, "staleness must be reported even when deviation is also present");
+        assertTrue(sawDeviation, "deviation must be reported even when staleness is also present");
+
+        // The same combined condition must also trigger auto-pause.
+        (bool triggered,) = policy.previewAutoPause(state);
+        assertTrue(triggered, "a stale-and-spiked oracle must trigger auto-pause");
+    }
 }

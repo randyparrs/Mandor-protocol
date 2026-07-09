@@ -41,6 +41,7 @@
 |---|---|---|
 | Prompt injection via user-submitted strategy text | No user-authored strategy text exists, all vaults are team-curated | `systemPrompt.ts` never concatenates strategy config text into the system prompt; always a separate labeled block |
 | Sybil resistance for public agent creation | There is no public agent/vault creation feature. This is not a future phase, it was cut from the roadmap entirely | `strategyAuthor` stays a generic address/identifier field rather than a hardcoded team-only assumption, at no extra cost |
+| Cryptographic signature verification on agent-proposed decisions (raised externally, by Grok) | Phase 1's human ops confirmation step (see `docs/architecture.md`, "Ops confirmation") already serves as the authorization layer between a proposed decision and anything executing, a signature scheme would authorize the same step redundantly | Noted here as a real requirement for a future phase, specifically if ops confirmation is ever automated away (e.g. an automated approval service replacing the human reviewer). At that point, the automated approver's authorization must be verified cryptographically, since there would no longer be a human in the loop to trust implicitly |
 
 ## Withdrawal and liquidity mechanics
 
