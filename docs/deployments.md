@@ -1,0 +1,90 @@
+# Arc Testnet Deployments
+
+## Mandate USDC Vault (first real vault, USDC-only)
+
+Deployed 2026-07-10 via `scripts/deployArcTestnet.ts`, run by Randy in his own
+terminal (keystore-protected `ARC_PRIVATE_KEY`, never handled by Claude).
+Every address, role assignment, and balance below was independently
+re-verified live against Arc Testnet after the fact (`eth_getCode`,
+`hasRole`, `totalAssets`, and the transaction history itself via the
+Blockscout API), not copied from the deploy script's own console output.
+
+USDC-only by design: no verified swap pool exists yet for native USDC
+directly against EURC or cirBTC (only EURC/cirBTC and WUSDC/cirBTC pools are
+confirmed, see `docs/arc-facts-to-verify.md`). Adding a target asset later
+means a new vault (v2), `MandateVault`'s registered asset list is fixed at
+construction with no path to add one afterward (confirmed by reading
+`_registerAsset`'s only two call sites, both inside the constructor), and
+`VaultPolicy` is immutable by design regardless. This matches the existing
+"a different risk profile is a new Vault+Policy pair, never a parameter
+change on a live one" rule, with the same manual-migration and
+reduced-trust-period handling already defined for strategy version changes.
+
+### Contract addresses
+
+| Contract | Address |
+|---|---|
+| MandateRoles | `0x91dC937Cf24cD84B415A1B9AD2f520834334504a` |
+| MandateVaultDeployer | `0xcEc347d22446e8234cfb3836A40F10221Ea58E35` |
+| CapitalLimitRegistry | `0x83983fd592168391303141DB723FfCB463D25081` |
+| VaultFactory | `0xb6B77A2978B1974097727e267BCaAC35ba7ddf12` |
+| MandateVault | `0x9D1b2853722bc69C062D044D74DBeFae430422be` |
+| VaultPolicy | `0x5285D175849513b5918aaB5c539b5ED79EEF1A1f` |
+
+### Role assignments (verified live via `hasRole`, not assumed)
+
+| Role | Address | Note |
+|---|---|---|
+| ADMIN_ROLE, DEFAULT_ADMIN_ROLE, GOVERNANCE_ROLE | `0x884687C973e9b7Af697dC34Aed1F09Da06BC4253` | Team/dedicated address, also `protocolTreasury` |
+| KEEPER_ROLE | `0xdfFDd05D61dbF4074A6C012d22deBfcf0d80c219` | Executor service identity, freshly generated for this purpose |
+| PAUSER_ROLE | `0x6639c0Ea56009EE64e11526221C28B979C698855` | Randy |
+| PAUSER_ROLE | `0x24b26f00Fa24FA41ef2EffBa5Be359f9301524f2` | Eudo |
+| (none) | `0xCe90c1806019Cb167F89cB7e8A9Cf5B4C96638A7` | Deployer wallet, held ADMIN_ROLE/DEFAULT_ADMIN_ROLE temporarily during deployment, renounced both, confirmed live it holds neither |
+
+### Vault state at creation
+
+- `totalAssets`: 5 USDC (the seed deposit)
+- Base asset: real native USDC, `0x3600000000000000000000000000000000000000`
+- Router allowlisted from construction: real UnitFlowV3Router,
+  `0x509cF58CdA08C7aee83a2BdBb4A1Eac907343D01`
+- `CapitalLimitRegistry` cap: 10,000 USDC, same value for every vault until
+  Phase 4's per-vault scoring exists
+
+### Transactions
+
+All 15, deployer `0xCe90c1806019Cb167F89cB7e8A9Cf5B4C96638A7`, nonces 78-92,
+block range 51112117-51112198. Reconstructed after the fact from the
+deployer's own transaction history via the Blockscout API
+(`testnet.arcscan.app/api/v2/addresses/{address}/transactions`), matched to
+this exact sequence by nonce order, not pasted from terminal output.
+
+| # | Step | Tx hash | Block | Gas used |
+|---|---|---|---|---|
+| 1 | Deploy MandateRoles | `0x47160c5019ce130bfc8ab7af0ae06d36f977097890f12b6cd236dd025a1535e6` | 51112117 | 374,405 |
+| 2 | grantRole(KEEPER_ROLE, KEEPER) | `0x79929929b954188dfa716afa506c72221d3b88d24224980d093bdc014c3147a4` | 51112125 | 51,454 |
+| 3 | grantRole(PAUSER_ROLE, Randy) | `0xd87eb3469a264d3e24b0cfc56366774e91a97ad6be65f298857d8b93563a0d60` | 51112130 | 51,442 |
+| 4 | grantRole(PAUSER_ROLE, Eudo) | `0xe146df5c3881ff74c4c2b7b6930d015cb944f11a3580ab4c705f43ab7dc5bbe8` | 51112135 | 51,442 |
+| 5 | grantRole(GOVERNANCE_ROLE, 0x8846...) | `0x73ce040e610b4c58b6a916c8a2038b4a65c2fe471c1081b7078f6ca0241a5e91` | 51112140 | 51,454 |
+| 6 | Deploy MandateVaultDeployer | `0x93ed8a130c717fe036e65cf751c8f9199f97c6bccbcdd1e63b272a12034f920d` | 51112147 | 3,976,443 |
+| 7 | Deploy CapitalLimitRegistry | `0x3d52b5349e8ff34a63ca5381d72805faa579748210f0c1eea1996422496dc86b` | 51112154 | 340,414 |
+| 8 | Deploy VaultFactory | `0x10d82b60cda0f10470ad7217caa560d1ef11d50d5ff1037f4d61dcab5de87a6c` | 51112159 | 2,522,860 |
+| 9 | MandateVaultDeployer.setFactory | `0xd31f2ea4cd5b44a331a9889bc4121a908c0462d07e9097b1ef0c9dcd43352756` | 51112165 | 44,049 |
+| 10 | USDC.approve(VaultFactory, 5 USDC) | `0x24b45b432009dd3164299280195799b468c81052bf15147c147a31a20c1a5c96` | 51112170 | 55,438 |
+| 11 | VaultFactory.createVault (deploys MandateVault + VaultPolicy internally) | `0x2ec653439bdf959bcbd0fff6d8c7d5e477617145165ac1a22f2a01ae8b6d2685` | 51112175 | 4,677,398 |
+| 12 | grantRole(ADMIN_ROLE, 0x8846...) | `0x3f607f71ad70d786d0c789a0f8b446bb8a8fc32cb5199f28bdbb1c259c200faf` | 51112183 | 51,454 |
+| 13 | grantRole(DEFAULT_ADMIN_ROLE, 0x8846...) | `0xc065fb65637c7280b2902b550ac78ade368e498c8c6600ea3df0987fdbd68196` | 51112188 | 51,070 |
+| 14 | renounceRole(ADMIN_ROLE, deployer) | `0x39ac27eb6d827bc4028829a81f088810bee41ddf47a40b247e3ceb96c2592950` | 51112193 | 25,020 |
+| 15 | renounceRole(DEFAULT_ADMIN_ROLE, deployer) | `0xa51b0724095b22ef3c9ffe2c283324fbf7e917c80993def86a73f5bd026a94bd` | 51112198 | 24,636 |
+
+MandateVault and VaultPolicy have no separate top-level deployment
+transaction, both were created by internal contract creations inside step
+11's transaction (`MandateVaultDeployer.deploy` creates MandateVault,
+`VaultFactory.createVault` creates VaultPolicy directly), confirmed by their
+addresses having real bytecode (`eth_getCode`) and by `MandateVault.policy()`
+returning the exact `VaultPolicy` address above.
+
+**Total real gas used: 12,348,979**, at the live gas price observed at
+deploy time (20.2 gwei-equivalent), roughly 0.249 USDC. Within 0.3% of the
+~0.25 USDC estimate projected before running, itself cross-checked against a
+live `eth_estimateGas` simulation of the four standalone deployments before
+running (see git history for that verification, not repeated here).

@@ -2,10 +2,14 @@
 // specifically so callers never mistake an offchain pre-check for the real,
 // authoritative onchain gate.
 
-import type { AssetSymbol } from "./decision";
+import type { AssetSymbol } from "./decision.js";
 
 export interface PolicyLimits {
   maxAllocationBpsPerAsset: Record<AssetSymbol, number>;
+  // Mirrors VaultPolicy.sol's isStableAsset mapping. Needed to replicate the
+  // MIN_STABLE_ALLOCATION_VIOLATED check, which sums allocation across every
+  // asset flagged stable, not just one.
+  isStableAsset: Record<AssetSymbol, boolean>;
   maxDrawdownBps: number;
   maxTradesPerDay: number;
   minStableAllocationBps: number;

@@ -2,13 +2,20 @@
   "name": "mandate-protocol",
   "version": "0.1.0",
   "type": "module",
+  "scripts": {
+    "test:agent": "node --import tsx --test agent/core/*.test.ts"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-foundry": "^3.0.4",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
     "hardhat": "^3.9.0",
+    "typescript": "^5.9.3",
     "viem": "^2.53.1"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.6.1"
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@openzeppelin/contracts": "^5.6.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
   }
 }

@@ -543,6 +543,30 @@ live vault is pinned to a specific Claude model version; migrating to a newer
 version requires a manual registry update and a Paper Vault re-validation
 pass, never a silent migration.
 
+**Pinning `modelId` alone is not enough: the exact rendered system prompt is
+pinned too, not just the model.** Changing the system prompt's text is the
+same class of behavioral risk as changing the model, a prompt edit can shift
+proposal behavior just as much as a model upgrade can. Every
+`DecisionRecord` stores a hash of the exact rendered system prompt (after
+vault-specific variables are substituted, not the git file version, which
+can differ per vault or drift from what actually ran) alongside `modelId`.
+Any prompt change that has not gone through a Paper Vault re-validation pass
+is exactly as visible and auditable as an unvalidated model change, same
+discipline applied to both, never treated as a "just words" edit that skips
+the process a model migration would require.
+
+**Extended thinking is used selectively, not uniformly for every action.**
+`HOLD` is the most common, lowest-risk action, the extra reasoning cost
+there is overhead without much payoff. It is reserved for `ENTER`, `EXIT`,
+and especially `EMERGENCY_EXIT_TO_STABLE`, the higher-impact decisions where
+paying for deeper reasoning is worth it. Thinking content carries the exact
+same authority status as the `reasoning` field: zero execution authority,
+explainability and audit value only, `VaultPolicy`'s onchain gate is
+unaffected either way. Stored (or hashed, if verbose) in `DecisionRecord`
+the same way `reasoning` is, so an anomalous or concerning decision can be
+audited down to the model's actual reasoning trace, not just its final
+summary.
+
 Early local testing is expected to use a local model (Ollama) before the real
 Anthropic API is wired in, the same free-first approach already used
 elsewhere. Treat any future switch from a local model to the live Claude API
@@ -560,9 +584,10 @@ assignments, capital limit registry values.
 
 **Offchain (DB):** `VaultMetadata`, `StrategyConfig` per version (seeds the
 onchain policy limits at deploy time, display copy only, never authoritative),
-`DecisionRecord` (mirrors onchain events + reasoning + pre-check result + ops
-confirmation + final onchain result + anomaly flag + expiration status, the
-AI Decision Timeline's backing store), `PaperVaultRun`, `MonthlyReport`,
+`DecisionRecord` (mirrors onchain events + reasoning + thinking trace (or its
+hash) + `modelId` + a hash of the exact rendered system prompt + pre-check
+result + ops confirmation + final onchain result + anomaly flag + expiration
+status, the AI Decision Timeline's backing store), `PaperVaultRun`, `MonthlyReport`,
 `ReputationSnapshot` (Phase 4 consumer, but the raw data already exists from
 Phase 1), `FollowRecord`.
 

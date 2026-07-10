@@ -4,3 +4,4 @@ cache/
 forge-out/
 forge-cache/
 .env
+data/
