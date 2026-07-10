@@ -31,6 +31,12 @@ export interface VaultDecision {
   proposedAt: string; // ISO timestamp
 }
 
+// Phase 1 config value, see docs/architecture.md's "Ops confirmation has a
+// hard expiration". A proposed decision is only ever relevant to the market
+// conditions it was proposed under, so this window is deliberately short,
+// not a generic "review at your leisure" timeout.
+export const DECISION_CONFIRMATION_TIMEOUT_SECONDS = 15 * 60;
+
 // The ops confirmation queue's wrapper around a proposed decision. A decision
 // that sits unconfirmed past expiresAt is auto-discarded by decisionPipeline
 // as "expired", it can never be confirmed late and rubber-stamped after

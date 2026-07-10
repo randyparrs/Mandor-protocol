@@ -9,6 +9,14 @@
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "include": ["agent/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["scripts/showDeployerAddress.ts", "scripts/deployArcTestnet.ts"]
+  "include": ["agent/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts", "executor/**/*.ts", "server/**/*.ts", "test/**/*.ts"],
+  "exclude": [
+    "scripts/showDeployerAddress.ts",
+    "scripts/deployArcTestnet.ts",
+    "test/CapitalLimitRegistry.ts",
+    "test/MandateVault.ts",
+    "test/VaultFactory.ts",
+    "test/VaultPolicy.ts",
+    "test/getVaultState.ts"
+  ]
 }
