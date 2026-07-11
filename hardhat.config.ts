@@ -21,9 +21,17 @@ export default defineConfig({
       chainType: "generic",
       url: "https://rpc.testnet.arc.network",
       chainId: 5042002,
-      // Private key stored encrypted via Hardhat's keystore.
+      // Both stored encrypted via Hardhat's keystore, never in this file
+      // or .env. accounts[0] (ARC_PRIVATE_KEY) is the original deployer
+      // wallet, which renounced ADMIN_ROLE/DEFAULT_ADMIN_ROLE right after
+      // the first deploy (see docs/deployments.md), it cannot call
+      // ADMIN_ROLE-gated functions like VaultFactory.createVault anymore.
+      // accounts[1] (ARC_ADMIN_PRIVATE_KEY) is the real team/admin address
+      // (0x884687C973e9b7Af697dC34Aed1F09Da06BC4253) that actually holds
+      // ADMIN_ROLE, needed for scripts/deployVaultV2.ts.
       // Set with: npx hardhat keystore set ARC_PRIVATE_KEY
-      accounts: [configVariable("ARC_PRIVATE_KEY")],
+      //           npx hardhat keystore set ARC_ADMIN_PRIVATE_KEY
+      accounts: [configVariable("ARC_PRIVATE_KEY"), configVariable("ARC_ADMIN_PRIVATE_KEY")],
     },
   },
 });

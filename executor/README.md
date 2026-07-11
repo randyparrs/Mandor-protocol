@@ -11,16 +11,18 @@ pre-check as a final sanity guard, simulates the transaction, submits it to
 
 **Built:** `types.ts` (`Executor` interface, the swappable seam),
 `paperExecutor.ts` (`PaperExecutor`, holds no key, makes no onchain call,
-appends one JSON line per decision to `data/paperVaultDecisions.jsonl` so
+appends one JSON line per decision to `data/paperVaultDecisions.jsonl`,
+via `shared/paths.ts`'s `projectDataPath` so the log always lands in the
+same place regardless of the process's launch directory, so
 Paper Vault decision history can accumulate before `server/`'s real
-`DecisionRecord` store exists), `alertSink.ts` (`AlertSink`/`KeeperEvent`,
-`ConsoleAlertSink` the real Phase 1 implementation, no notification channel
-exists anywhere in this repo yet, a richer webhook/Slack sink is additive
-later), and `keeperService.ts` (`KeeperService`, the real signer, design
-reviewed with Randy before writing any code, see the plan file this session
-produced). "The one module that holds a signing key" below refers
-specifically to `keeperService.ts`, not this file's `Executor` interface or
-`PaperExecutor`.
+`DecisionRecord` store exists), and `keeperService.ts` (`KeeperService`,
+the real signer, design reviewed with Randy before writing any code, see
+the plan file this session produced). "The one module that holds a signing
+key" below refers specifically to `keeperService.ts`, not this file's
+`Executor` interface or `PaperExecutor`. `AlertSink`/`AlertEvent`/
+`ConsoleAlertSink` moved to `shared/alertSink.ts` once `server/indexer/`
+needed the same interface, no notification channel (Slack/PagerDuty/
+webhook) exists anywhere in this repo yet, a richer one is additive later.
 
 **`KeeperService`, built this round, covers:**
 - **Key handling:** `KEEPER_PRIVATE_KEY` read once from `process.env` inside

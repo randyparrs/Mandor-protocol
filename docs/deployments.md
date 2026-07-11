@@ -88,3 +88,81 @@ deploy time (20.2 gwei-equivalent), roughly 0.249 USDC. Within 0.3% of the
 ~0.25 USDC estimate projected before running, itself cross-checked against a
 live `eth_estimateGas` simulation of the four standalone deployments before
 running (see git history for that verification, not repeated here).
+
+## Mandate USDC+cirBTC Vault (v2, second real vault)
+
+Deployed 2026-07-11 via `scripts/deployVaultV2.ts`, run by Randy in his own
+terminal (keystore-protected `ARC_ADMIN_PRIVATE_KEY`, the real ADMIN_ROLE
+holder, never the original deployer wallet, which renounced admin rights
+right after the first deploy). Reuses the already-deployed
+`MandateRoles`/`MandateVaultDeployer`/`CapitalLimitRegistry`/`VaultFactory`
+as-is, VaultFactory wires its own immutable `roles`/`capitalLimitRegistry`/
+`protocolTreasury` fields into every vault it creates automatically, nothing
+here required a new role grant or a new shared-infrastructure deployment.
+Every address and policy limit below was independently re-verified live
+(`vaultCount`, `allVaults`, `isMandateVault`, `MandateVault.policy()`/
+`VaultPolicy.vault()` cross-referenced both directions, `totalAssets`,
+`isRegisteredAsset`, `minStableAllocationBps`, `maxAllocationBpsPerAsset`,
+`isStableAsset`), not copied from the deploy script's own console output.
+
+Built specifically so `agent/policy/offchainPolicyCheck.ts`'s ENTER/EXIT
+projection and the real swap-leg construction (not built yet) have a real
+second asset to execute against, instead of a mock, see the analysis this
+deployment followed. cirBTC chosen over EURC: the WUSDC/cirBTC pool has
+confirmed real liquidity and is the exact pair
+`test/MandateVaultArcFork.t.sol` already proves a real swap through
+`executeDecision` against; EURC's only confirmed pool is EURC/cirBTC, not
+directly paired with USDC, which the current single-hop `SwapLeg` design
+does not support.
+
+### Contract addresses
+
+| Contract | Address |
+|---|---|
+| VaultFactory (reused, not redeployed) | `0xb6B77A2978B1974097727e267BCaAC35ba7ddf12` |
+| MandateVault v2 | `0x6a00e9de0b830Fd2Bc37db7C19Ae8b67a0df1862` |
+| VaultPolicy v2 | `0x676a1dd7CF88C768559d9A3ECC60F5Fc5319b9d5` |
+| cirBTC (second registered asset) | `0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF` |
+
+### Policy limits specific to this vault
+
+Per Randy's explicit call, more conservative than a simple "give it room"
+default, for this vault's first volatile asset:
+
+- `minStableAllocationBps`: 8000 (80% minimum stable, i.e. at most 20% of
+  NAV in cirBTC)
+- `maxAllocationBpsPerAsset[cirBTC]`: 2000 (20%), deliberately set to the
+  same ceiling `minStableAllocationBps` already implies, not a separate,
+  looser number
+- `maxAllocationBpsPerAsset[USDC]`: 10000 (can still be up to 100% before
+  any cirBTC position is entered)
+- Every other limit (`maxDrawdownBps` 1000, `maxTradesPerDay` 5,
+  `oracleMaxStalenessSeconds` 3600, `oracleMaxDeviationBps` 500,
+  `maxDrawdownSpeedBpsPerWindow` 300, `drawdownSpeedWindowSeconds` 3600)
+  reused unchanged from v1, none of these are asset-specific.
+
+### Vault state at creation
+
+- `totalAssets`: 5 USDC (the seed deposit), same minimal-real-capital
+  sizing as v1
+- Base asset: real native USDC, same as v1
+- `CapitalLimitRegistry` cap: shared with v1, 10,000 USDC total, not a
+  separate per-vault value (Phase 4 concern, not this stage's)
+
+### Transactions
+
+Both signed by the real ADMIN_ROLE holder,
+`0x884687C973e9b7Af697dC34Aed1F09Da06BC4253`. Reconstructed after the fact
+from that address's own transaction history via the Blockscout API, not
+pasted from terminal output.
+
+| # | Step | Tx hash | Block | Gas used |
+|---|---|---|---|---|
+| 1 | USDC.approve(VaultFactory, 5 USDC) | `0x406b7bdae1b70eb21693710013687b0f92664af2c575499b32599d577a1c4936` | 51318317 | 55,438 |
+| 2 | VaultFactory.createVault (deploys MandateVault v2 + VaultPolicy v2 internally, USDC + cirBTC) | `0x052e66bd1970859dc59dd31b4b72650dda1c69dec9be84df9aabab32ca30cded` | 51318322 | 4,768,427 |
+
+**Total real gas used: 4,823,865**, roughly 0.097 USDC at the same gas price
+basis as the first deployment, well within the ~0.10-0.13 USDC estimate
+projected before running. Notably cheaper than the first deployment
+(0.249 USDC) despite deploying a vault with one more registered asset,
+since none of the shared protocol infrastructure needed redeploying.

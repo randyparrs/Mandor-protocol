@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { privateKeyToAccount } from "viem/accounts";
 import { KeeperService } from "../executor/keeperService.js";
 import { DecisionPipeline } from "../server/decisionPipeline.js";
-import type { KeeperEvent } from "../executor/alertSink.js";
+import type { AlertEvent } from "../shared/alertSink.js";
 import type { VaultDecision } from "../shared/decision.js";
 import type { PolicyLimits } from "../shared/policyTypes.js";
 import type { MarketData, VaultState } from "../agent/core/types.js";
@@ -138,7 +138,7 @@ function makeService(opts: {
   pipeline: DecisionPipeline;
   publicClient: ReturnType<typeof makeFakePublicClient>["publicClient"];
   walletClient: ReturnType<typeof makeFakeWalletClient>["walletClient"];
-  events: KeeperEvent[];
+  events: AlertEvent[];
   proposeDecisionFn?: (input: unknown) => Promise<ProposeDecisionResult>;
   getMarketDataCallCount?: { count: number };
 }) {
@@ -181,7 +181,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient({ totalAssetsSequence: [5_000_000n, 5_000_000n] });
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();
@@ -200,7 +200,7 @@ describe("KeeperService", () => {
     // preNAV then a different postNAV, simulating something unexpected moved funds.
     const { publicClient } = makeFakePublicClient({ totalAssetsSequence: [5_000_000n, 4_000_000n] });
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();
@@ -218,7 +218,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient({ simulateShouldThrow: true });
     const { walletClient, calls: walletCalls } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();
@@ -235,7 +235,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient, calls: walletCalls } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = new KeeperService({
       publicClient: publicClient as any,
       walletClient: walletClient as any,
@@ -274,7 +274,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient({ totalAssetsSequence: [5_000_000n, 5_000_000n, 5_000_000n, 5_000_000n] });
     const { walletClient, getMaxConcurrent } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();
@@ -291,7 +291,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     let sampleCount = 0;
     const service = makeService({
       pipeline,
@@ -317,7 +317,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient, calls: walletCalls } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     let sampleIndex = 0;
     const service = makeService({
       pipeline,
@@ -350,7 +350,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const callCount = { count: 0 };
     const service = makeService({ pipeline, publicClient, walletClient, events, getMarketDataCallCount: callCount });
 
@@ -368,7 +368,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const callCount = { count: 0 };
     const service = makeService({ pipeline, publicClient, walletClient, events, getMarketDataCallCount: callCount });
 
@@ -382,7 +382,7 @@ describe("KeeperService", () => {
     const pipeline = new DecisionPipeline();
     const { publicClient } = makeFakePublicClient();
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();
@@ -399,7 +399,7 @@ describe("KeeperService", () => {
 
     const { publicClient } = makeFakePublicClient();
     const { walletClient } = makeFakeWalletClient();
-    const events: KeeperEvent[] = [];
+    const events: AlertEvent[] = [];
     const service = makeService({ pipeline, publicClient, walletClient, events });
 
     await service.runOnce();

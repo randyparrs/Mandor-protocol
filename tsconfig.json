@@ -13,6 +13,7 @@
   "exclude": [
     "scripts/showDeployerAddress.ts",
     "scripts/deployArcTestnet.ts",
+    "scripts/deployVaultV2.ts",
     "test/CapitalLimitRegistry.ts",
     "test/MandateVault.ts",
     "test/VaultFactory.ts",

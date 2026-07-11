@@ -102,6 +102,33 @@ describe("DecisionPipeline", () => {
     assert.equal(rejected.resolvedBy, "ops@team");
   });
 
+  it("autoConfirmIfHold confirms a HOLD decision with a distinct, auditable confirmedBy, never a real person's identifier", () => {
+    const pipeline = new DecisionPipeline();
+    const entry = pipeline.enqueue(decision({ action: "HOLD" }), passingCheck(), 5, marketData());
+    const confirmed = pipeline.autoConfirmIfHold(entry.decisionId);
+    assert.ok(confirmed);
+    assert.equal(confirmed!.queued.status, "confirmed");
+    assert.equal(confirmed!.queued.confirmedBy, "auto-confirm:hold-only-loop");
+  });
+
+  it("autoConfirmIfHold never confirms any non-HOLD action, no exceptions, including EMERGENCY_EXIT_TO_STABLE", () => {
+    const pipeline = new DecisionPipeline();
+    for (const action of ["ENTER", "EXIT", "REBALANCE", "EMERGENCY_EXIT_TO_STABLE"] as const) {
+      const entry = pipeline.enqueue(decision({ action }), passingCheck(), 5, marketData());
+      const result = pipeline.autoConfirmIfHold(entry.decisionId);
+      assert.equal(result, null);
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "pending_confirmation");
+    }
+  });
+
+  it("autoConfirmIfHold returns null rather than throwing for an already-resolved or missing entry", () => {
+    const pipeline = new DecisionPipeline();
+    const entry = pipeline.enqueue(decision({ action: "HOLD" }), passingCheck(), 5, marketData());
+    pipeline.confirm(entry.decisionId, "ops@team");
+    assert.equal(pipeline.autoConfirmIfHold(entry.decisionId), null);
+    assert.equal(pipeline.autoConfirmIfHold("not-a-real-id"), null);
+  });
+
   it("throws confirming a decisionId that does not exist", () => {
     const pipeline = new DecisionPipeline();
     assert.throws(() => pipeline.confirm("not-a-real-id", "ops@team"));

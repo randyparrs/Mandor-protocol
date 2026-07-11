@@ -16,7 +16,7 @@ import type { PolicyCheckResult, PolicyLimits } from "../shared/policyTypes.js";
 import type { MarketData } from "../agent/core/types.js";
 import { parseRawAmount } from "../shared/money.js";
 import type { Executor, ExecutionResult } from "./types.js";
-import { ConsoleAlertSink, makeEvent, type AlertSink } from "./alertSink.js";
+import { ConsoleAlertSink, makeEvent, type AlertSink } from "../shared/alertSink.js";
 
 const POLICY_GETTER_ABI = [
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },

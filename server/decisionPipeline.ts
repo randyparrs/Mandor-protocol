@@ -5,18 +5,21 @@
 // never do"), then agent/policy's checkPolicyOffchain, then queues the
 // result as a QueuedDecision with a hard expiresAt.
 //
-// No real database yet (server/db/ is not built), so DecisionPipeline is an
-// in-memory store, Phase 1 scoped: a single process instance is the source
-// of truth for pending confirmations. A restart loses anything still
-// pending, acceptable for now given nothing here ever signs or moves funds,
-// see the threat-model.md row on ops-confirmation compromise: it only ever
-// flips a flag, the keeper independently re-validates onchain regardless.
+// DecisionPipeline's in-memory Map is the working set every method reads
+// and mutates directly (never rewritten to read through a DB on every
+// call, keeps this fast and keeps every existing test working with zero
+// setup). An optional DecisionStore (server/db/decisionStore.ts) makes that
+// Map durable across a restart: passing one hydrates from it at
+// construction and persists every mutation to it, passing none (the
+// default, and what every fast test still uses) behaves exactly as before,
+// in-memory only.
 import { randomUUID } from "node:crypto";
 import { proposeDecision, type ProposeDecisionInput } from "../agent/core/loop.js";
 import { checkPolicyOffchain, type OffchainPolicyCheckParams } from "../agent/policy/offchainPolicyCheck.js";
 import { DECISION_CONFIRMATION_TIMEOUT_SECONDS, type QueuedDecision, type VaultDecision } from "../shared/decision.js";
 import type { MarketData } from "../agent/core/types.js";
 import type { PolicyCheckResult } from "../shared/policyTypes.js";
+import type { DecisionStore } from "./db/decisionStore.js";
 
 export type AnomalyFlagCode = "HIGH_PROPOSAL_RATE" | "POLICY_PRECHECK_VIOLATION" | "LOW_CONFIDENCE" | "SELF_CONSISTENCY_DISAGREEMENT";
 
@@ -29,6 +32,11 @@ export interface AnomalyFlag {
 // "genuinely uncertain", not just "somewhat confident", worth a human's
 // attention before confirming.
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
+
+// Identifies a HOLD auto-confirmed by the unattended decision-cycle script
+// (scripts/runDecisionCycle.ts), never a real person, so the audit trail
+// (confirmedBy) always distinguishes the two.
+const AUTO_CONFIRM_HOLD_IDENTIFIER = "auto-confirm:hold-only-loop";
 
 export interface DecisionPipelineEntry {
   decisionId: string;
@@ -99,6 +107,14 @@ export function computeAnomalyFlags(params: {
 export class DecisionPipeline {
   private readonly entries = new Map<string, DecisionPipelineEntry>();
 
+  constructor(private readonly store?: DecisionStore) {
+    if (store) {
+      for (const entry of store.loadAll()) {
+        this.entries.set(entry.decisionId, entry);
+      }
+    }
+  }
+
   /// @notice The full real path: proposeDecision (real Claude call) ->
   /// checkPolicyOffchain -> anomaly flags -> queue. Costs a real API call
   /// every time, never call this in a fast/free test, see
@@ -139,6 +155,7 @@ export class DecisionPipeline {
       priority: "normal",
     };
     this.entries.set(entry.decisionId, entry);
+    this.store?.upsert(entry);
     return entry;
   }
 
@@ -152,6 +169,26 @@ export class DecisionPipeline {
   /// for a successful confirmation.
   confirm(decisionId: string, confirmedBy: string): DecisionPipelineEntry {
     return this.resolve(decisionId, "confirmed", confirmedBy);
+  }
+
+  /// @notice The ONLY auto-confirmation path this system has, and
+  /// deliberately narrow, confirmed explicitly with Randy: HOLD never
+  /// moves funds or changes state (the keeper always submits it with an
+  /// empty swap-leg array), so auto-confirming it is functionally
+  /// equivalent to a human clicking confirm every time, just unattended.
+  /// Every other action (ENTER/EXIT/REBALANCE/EMERGENCY_EXIT_TO_STABLE)
+  /// always requires a real human confirmedBy, no exceptions, especially
+  /// EMERGENCY_EXIT_TO_STABLE given it already bypasses normal onchain
+  /// allocation/drawdown checks. Returns null (does not throw) for a
+  /// non-HOLD decision, leaving it untouched in the queue for a human,
+  /// rather than treating "not eligible for auto-confirm" as an error.
+  autoConfirmIfHold(decisionId: string): DecisionPipelineEntry | null {
+    this.sweepExpired();
+    const entry = this.entries.get(decisionId);
+    if (!entry || entry.queued.decision.action !== "HOLD" || entry.queued.status !== "pending_confirmation") {
+      return null;
+    }
+    return this.confirm(decisionId, AUTO_CONFIRM_HOLD_IDENTIFIER);
   }
 
   reject(decisionId: string, rejectedBy: string): DecisionPipelineEntry {
@@ -175,12 +212,30 @@ export class DecisionPipeline {
     entry.queued = status === "confirmed" ? { ...entry.queued, status, confirmedBy: resolvedBy, confirmedAt: resolvedAt } : { ...entry.queued, status };
     entry.resolvedBy = resolvedBy;
     entry.resolvedAt = resolvedAt;
+    this.store?.upsert(entry);
     return entry;
   }
 
   getEntry(decisionId: string): DecisionPipelineEntry | undefined {
     this.sweepExpired();
     return this.entries.get(decisionId);
+  }
+
+  /// @notice What server/indexer/eventIndexer.ts uses to correlate an
+  /// onchain DecisionExecuted log back to the DecisionPipelineEntry that
+  /// produced it, transactionHash is the only key shared between the
+  /// offchain pipeline and an onchain event.
+  findByTxHash(txHash: `0x${string}`): DecisionPipelineEntry | undefined {
+    this.sweepExpired();
+    return [...this.entries.values()].find((e) => e.txHash === txHash);
+  }
+
+  /// @notice Every entry for a vault regardless of status, what the AI
+  /// Decision Timeline (server/indexer/) reads to join against onchain
+  /// events, see docs/architecture.md's "Offchain (DB)" section.
+  listAllForVault(vaultId: `0x${string}`): DecisionPipelineEntry[] {
+    this.sweepExpired();
+    return [...this.entries.values()].filter((e) => e.queued.decision.vaultId === vaultId);
   }
 
   listPendingForVault(vaultId: `0x${string}`): DecisionPipelineEntry[] {
@@ -191,7 +246,7 @@ export class DecisionPipeline {
   /// @notice What executor/keeperService.ts polls: decisions ops already
   /// confirmed but that have not yet landed onchain. A "confirmed" entry
   /// that stays in this list past a defined timeout is exactly what the
-  /// keeper's heartbeat watchdog alerts on, see executor/alertSink.ts.
+  /// keeper's heartbeat watchdog alerts on, see shared/alertSink.ts.
   listConfirmedUnexecuted(vaultId: `0x${string}`): DecisionPipelineEntry[] {
     this.sweepExpired();
     return [...this.entries.values()].filter((e) => e.queued.decision.vaultId === vaultId && e.queued.status === "confirmed");
@@ -211,6 +266,7 @@ export class DecisionPipeline {
     }
     entry.queued = { ...entry.queued, status: "executed" };
     entry.txHash = txHash;
+    this.store?.upsert(entry);
     return entry;
   }
 
@@ -242,6 +298,7 @@ export class DecisionPipeline {
     entry.anomalyFlags = [...entry.anomalyFlags, flag];
     entry.resolvedBy = undefined;
     entry.resolvedAt = undefined;
+    this.store?.upsert(entry);
     return entry;
   }
 
@@ -257,6 +314,7 @@ export class DecisionPipeline {
     for (const entry of this.entries.values()) {
       if (entry.queued.status === "pending_confirmation" && new Date(entry.queued.expiresAt).getTime() <= now.getTime()) {
         entry.queued = { ...entry.queued, status: "expired" };
+        this.store?.upsert(entry);
       }
     }
   }
@@ -264,5 +322,13 @@ export class DecisionPipeline {
   private countRecentProposals(vaultId: `0x${string}`, now: Date, windowSeconds = 24 * 60 * 60): number {
     const cutoff = now.getTime() - windowSeconds * 1000;
     return [...this.entries.values()].filter((e) => e.queued.decision.vaultId === vaultId && new Date(e.queued.queuedAt).getTime() >= cutoff).length;
+  }
+
+  /// @notice Closes the underlying DecisionStore's database handle, if one
+  /// was provided. A no-op for the in-memory-only default every fast test
+  /// uses. Callers that construct a real, file-backed store should call
+  /// this on graceful shutdown.
+  close(): void {
+    this.store?.close();
   }
 }

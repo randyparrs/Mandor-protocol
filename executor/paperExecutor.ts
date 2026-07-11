@@ -7,6 +7,7 @@ import { mkdir, appendFile } from "node:fs/promises";
 import path from "node:path";
 import type { VaultDecision } from "../shared/decision.js";
 import type { PolicyCheckResult } from "../shared/policyTypes.js";
+import { projectDataPath } from "../shared/paths.js";
 import type { Executor, ExecutionResult } from "./types.js";
 
 export interface PaperExecutionResult extends ExecutionResult {
@@ -15,7 +16,10 @@ export interface PaperExecutionResult extends ExecutionResult {
   policyCheck: PolicyCheckResult;
 }
 
-const DEFAULT_LOG_PATH = path.join(process.cwd(), "data", "paperVaultDecisions.jsonl");
+// Anchored to this project's own root (shared/paths.ts), not process.cwd(),
+// so the log always lands in the same gitignored data/ directory
+// regardless of which directory the process happens to be launched from.
+const DEFAULT_LOG_PATH = projectDataPath("paperVaultDecisions.jsonl");
 
 /// @notice Appends one JSON line per decision to a local log file so Paper
 /// Vault decision history can start accumulating before server/'s real
