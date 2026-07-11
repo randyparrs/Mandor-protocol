@@ -65,3 +65,17 @@ for now, this module never signs or moves funds either way, see
 `scripts/testDecisionPipelineAgainstRealVault.ts` runs the full real path
 end to end against the live deployed vault: a real Claude proposal, a real
 onchain-limits pre-check, queuing, and confirmation.
+
+**Extended for `executor/keeperService.ts`.** `DecisionPipelineEntry` now
+also carries the exact `marketData` `proposeDecision` used (so the keeper
+can reuse the price rather than refetch, see `executor/README.md`) and a
+`priority: "normal" | "high"` field. Three new methods:
+`listConfirmedUnexecuted(vaultId)` (what the keeper polls),
+`markExecuted(decisionId, txHash)` (the one terminal, success-only
+transition, only ever called after a real transaction receipt comes back
+`status: "success"`), and `returnToQueueForReview(decisionId, flag)` (only
+for the keeper's `EMERGENCY_EXIT_TO_STABLE` self-consistency gate: flips an
+already-confirmed entry back to `"pending_confirmation"` with a fresh
+`expiresAt` and `priority: "high"` when fresh proposals disagree, rather
+than executing on stale ops authorization or silently discarding a
+disagreement that is itself meaningful signal).

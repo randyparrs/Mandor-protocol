@@ -15,9 +15,10 @@ import { randomUUID } from "node:crypto";
 import { proposeDecision, type ProposeDecisionInput } from "../agent/core/loop.js";
 import { checkPolicyOffchain, type OffchainPolicyCheckParams } from "../agent/policy/offchainPolicyCheck.js";
 import { DECISION_CONFIRMATION_TIMEOUT_SECONDS, type QueuedDecision, type VaultDecision } from "../shared/decision.js";
+import type { MarketData } from "../agent/core/types.js";
 import type { PolicyCheckResult } from "../shared/policyTypes.js";
 
-export type AnomalyFlagCode = "HIGH_PROPOSAL_RATE" | "POLICY_PRECHECK_VIOLATION" | "LOW_CONFIDENCE";
+export type AnomalyFlagCode = "HIGH_PROPOSAL_RATE" | "POLICY_PRECHECK_VIOLATION" | "LOW_CONFIDENCE" | "SELF_CONSISTENCY_DISAGREEMENT";
 
 export interface AnomalyFlag {
   code: AnomalyFlagCode;
@@ -38,8 +39,20 @@ export interface DecisionPipelineEntry {
   // reviewer as an anomaly flag instead, see computeAnomalyFlags.
   policyCheck: PolicyCheckResult;
   anomalyFlags: AnomalyFlag[];
+  // The exact MarketData proposeDecision used to produce this decision, so
+  // executor/keeperService.ts can reuse it (per its own staleness check)
+  // instead of fetching a second, independently-timed price for the same
+  // execution, see executor/README.md.
+  marketData: MarketData;
+  // "high" only ever set by returnToQueueForReview (a keeper-side
+  // self-consistency disagreement on EMERGENCY_EXIT_TO_STABLE), never by
+  // enqueue itself, an ordinary fresh proposal is always "normal".
+  priority: "normal" | "high";
   resolvedBy?: string;
   resolvedAt?: string;
+  // Set only by markExecuted, once the keeper's transaction actually lands
+  // onchain successfully. Absent for every other status.
+  txHash?: `0x${string}`;
 }
 
 /// @notice Flags worth a human's attention, never a reason to block queuing
@@ -97,14 +110,14 @@ export class DecisionPipeline {
   ): Promise<DecisionPipelineEntry> {
     const { decision } = await proposeDecision(input);
     const policyCheck = checkPolicyOffchain({ ...policyParams, decision });
-    return this.enqueue(decision, policyCheck, policyParams.policyLimits.maxTradesPerDay);
+    return this.enqueue(decision, policyCheck, policyParams.policyLimits.maxTradesPerDay, input.marketData);
   }
 
   /// @notice The pure, synchronous half of the pipeline: given an
   /// already-produced decision and its pre-check result, computes anomaly
   /// flags and queues it with a hard expiresAt. Split out from
   /// proposeAndQueue so it can be unit tested without a real API call.
-  enqueue(decision: VaultDecision, policyCheck: PolicyCheckResult, maxTradesPerDay: number): DecisionPipelineEntry {
+  enqueue(decision: VaultDecision, policyCheck: PolicyCheckResult, maxTradesPerDay: number, marketData: MarketData): DecisionPipelineEntry {
     this.sweepExpired();
 
     const priorProposalsToday = this.countRecentProposals(decision.vaultId, new Date());
@@ -122,6 +135,8 @@ export class DecisionPipeline {
       },
       policyCheck,
       anomalyFlags,
+      marketData,
+      priority: "normal",
     };
     this.entries.set(entry.decisionId, entry);
     return entry;
@@ -171,6 +186,63 @@ export class DecisionPipeline {
   listPendingForVault(vaultId: `0x${string}`): DecisionPipelineEntry[] {
     this.sweepExpired();
     return [...this.entries.values()].filter((e) => e.queued.decision.vaultId === vaultId && e.queued.status === "pending_confirmation");
+  }
+
+  /// @notice What executor/keeperService.ts polls: decisions ops already
+  /// confirmed but that have not yet landed onchain. A "confirmed" entry
+  /// that stays in this list past a defined timeout is exactly what the
+  /// keeper's heartbeat watchdog alerts on, see executor/alertSink.ts.
+  listConfirmedUnexecuted(vaultId: `0x${string}`): DecisionPipelineEntry[] {
+    this.sweepExpired();
+    return [...this.entries.values()].filter((e) => e.queued.decision.vaultId === vaultId && e.queued.status === "confirmed");
+  }
+
+  /// @notice Only ever called by the keeper, only after a real transaction's
+  /// receipt comes back status "success". Never called speculatively before
+  /// a receipt exists, see executor/keeperService.ts's "never auto-retry"
+  /// rule, this is the one terminal, success-only transition.
+  markExecuted(decisionId: string, txHash: `0x${string}`): DecisionPipelineEntry {
+    const entry = this.entries.get(decisionId);
+    if (!entry) {
+      throw new Error(`No queued decision found for decisionId ${decisionId}.`);
+    }
+    if (entry.queued.status !== "confirmed") {
+      throw new Error(`decisionId ${decisionId} is "${entry.queued.status}", not "confirmed", cannot mark it executed.`);
+    }
+    entry.queued = { ...entry.queued, status: "executed" };
+    entry.txHash = txHash;
+    return entry;
+  }
+
+  /// @notice Only for the keeper's EMERGENCY_EXIT_TO_STABLE self-consistency
+  /// gate: called when 3 fresh proposeDecision samples did not unanimously
+  /// agree with an already-confirmed EMERGENCY_EXIT_TO_STABLE decision.
+  /// Ops' earlier confirmation was valid given the information available
+  /// then, not a standing authorization regardless of what changed after,
+  /// so this returns the entry to "pending_confirmation" with a fresh
+  /// expiresAt, rather than executing on stale authorization or silently
+  /// discarding a disagreement that is itself meaningful signal.
+  returnToQueueForReview(decisionId: string, flag: AnomalyFlag): DecisionPipelineEntry {
+    const entry = this.entries.get(decisionId);
+    if (!entry) {
+      throw new Error(`No queued decision found for decisionId ${decisionId}.`);
+    }
+    if (entry.queued.status !== "confirmed") {
+      throw new Error(`decisionId ${decisionId} is "${entry.queued.status}", not "confirmed", cannot return it to the queue for review.`);
+    }
+    const queuedAt = new Date();
+    const expiresAt = new Date(queuedAt.getTime() + DECISION_CONFIRMATION_TIMEOUT_SECONDS * 1000);
+    entry.queued = {
+      decision: entry.queued.decision,
+      status: "pending_confirmation",
+      queuedAt: queuedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    };
+    entry.priority = "high";
+    entry.anomalyFlags = [...entry.anomalyFlags, flag];
+    entry.resolvedBy = undefined;
+    entry.resolvedAt = undefined;
+    return entry;
   }
 
   /// @notice Marks every still-"pending_confirmation" entry past its
