@@ -1,37 +1,45 @@
 import { useState } from "react";
 import { usePrivy, useWallets, useCreateWallet } from "@privy-io/react-auth";
 import { createPrivyWalletClient } from "./lib/privyWallet";
-import { readVaultState, publicClient, type VaultReadState } from "./lib/vaultReads";
-import { VAULT_ABI } from "./lib/vaultAbi";
-import { VAULTS, BASE_ASSET_ADDRESS } from "./lib/vaults";
+import { readVaultState, type VaultReadState } from "./lib/vaultReads";
+import { approveSpend, depositToVault, withdrawFromVault } from "./lib/vaultActions";
+import { fetchDecisionTimeline, type DecisionTimelineEntry, type TimelineIndexedEvent } from "./lib/timeline";
+import { DecisionTimeline, VaultLevelEvents } from "./components/DecisionTimeline";
+import { VAULTS, BASE_ASSET_DECIMALS } from "./lib/vaults";
+import { parseRawAmount } from "../shared/money";
 
-const ERC20_APPROVE_ABI = [
-  {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { type: "address", name: "spender" },
-      { type: "uint256", name: "amount" },
-    ],
-    outputs: [{ type: "bool" }],
-  },
-] as const;
+// Phase B: full deposit/withdraw UI, built on Phase A's already-verified
+// pieces (Privy onboarding, vault reads, real signed transactions, all
+// confirmed live end to end, see src/README.md). Reused, not rebuilt: the
+// wallet-selection pattern is still Vpay's proven one
+// (design_handoff_vpay/app/src/pages/VpayApp.tsx).
+function KnownLimitations({ limitations }: { limitations: string[] }) {
+  if (limitations.length === 0) return null;
+  return (
+    <div style={{ background: "#fff3cd", border: "1px solid #ffcd39", padding: "1rem", margin: "1rem 0" }}>
+      <strong>Known limitations of this vault today:</strong>
+      <ul>
+        {limitations.map((limitation, i) => (
+          <li key={i}>{limitation}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-// Phase A scope only: prove real Privy onboarding + one real signed
-// transaction against Arc Testnet, plus read-only vault state. The full
-// deposit/withdraw UI is Phase B, gated on this working cleanly. Reverted
-// from Circle Wallets to Privy (see experiments/circle-wallets/README.md
-// for why), reusing the exact provider/config/wallet-selection pattern
-// already proven in design_handoff_vpay/app, not reinvented.
 export default function App() {
   const { ready, authenticated, login, logout } = usePrivy();
   const { wallets } = useWallets();
   const { createWallet } = useCreateWallet();
   const [vaultId, setVaultId] = useState(VAULTS[0].id);
   const [vaultState, setVaultState] = useState<VaultReadState | null>(null);
+  const [depositAmount, setDepositAmount] = useState("1");
+  const [withdrawAmount, setWithdrawAmount] = useState("1");
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  const [timelineEntries, setTimelineEntries] = useState<DecisionTimelineEntry[] | null>(null);
+  const [vaultEvents, setVaultEvents] = useState<TimelineIndexedEvent[] | null>(null);
+  const [timelineBusy, setTimelineBusy] = useState(false);
 
   const vault = VAULTS.find((v) => v.id === vaultId)!;
   const appendLog = (line: string) => setLog((prev) => [...prev, line]);
@@ -42,6 +50,13 @@ export default function App() {
   // connected (e.g. an external wallet the user linked).
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") ?? wallets[0];
   const userAddress = embeddedWallet?.address as `0x${string}` | undefined;
+
+  async function refreshVaultState() {
+    if (!userAddress) return;
+    const state = await readVaultState(vault.address, vault.policyAddress, userAddress);
+    setVaultState(state);
+    return state;
+  }
 
   async function handleConnect() {
     setBusy(true);
@@ -62,13 +77,27 @@ export default function App() {
     }
   }
 
+  async function handleRefreshTimeline() {
+    setTimelineBusy(true);
+    try {
+      const result = await fetchDecisionTimeline(vault.address, vault.policyAddress);
+      setTimelineEntries(result.entries);
+      setVaultEvents(result.vaultEvents);
+    } catch (error) {
+      appendLog(`Error loading decision timeline: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setTimelineBusy(false);
+    }
+  }
+
   async function handleRefreshVaultState() {
     if (!userAddress) return;
     setBusy(true);
     try {
-      const state = await readVaultState(vault.address, vault.policyAddress, userAddress);
-      setVaultState(state);
-      appendLog(`Read ${vault.label}: totalAssets=${state.totalAssetsUSDC} USDC, your position=${state.yourPositionUSDC} USDC, maxDeposit=${state.maxDepositUSDC}, maxWithdraw=${state.maxWithdrawUSDC}, paused=${state.paused}`);
+      const state = await refreshVaultState();
+      if (state) {
+        appendLog(`Read ${vault.label}: totalAssets=${state.totalAssetsUSDC} USDC, your position=${state.yourPositionUSDC} USDC, maxDeposit=${state.maxDepositUSDC}, maxWithdraw=${state.maxWithdrawUSDC}, paused=${state.paused}`);
+      }
     } catch (error) {
       appendLog(`Error reading vault state: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -76,25 +105,58 @@ export default function App() {
     }
   }
 
-  async function handleTestApprove() {
+  const depositAmountRaw = (() => {
+    try {
+      return parseRawAmount(depositAmount || "0", BASE_ASSET_DECIMALS);
+    } catch {
+      return 0n;
+    }
+  })();
+  const needsApproval = !vaultState || vaultState.allowance < depositAmountRaw;
+
+  async function handleApprove() {
     if (!embeddedWallet || !userAddress) return;
     setBusy(true);
     try {
-      appendLog("Submitting a real approve(vault, 0) via Privy (Phase A go/no-go proof)...");
+      appendLog(`Approving ${depositAmount} USDC for ${vault.label}...`);
       const walletClient = await createPrivyWalletClient(embeddedWallet);
-      const hash = await walletClient.writeContract({
-        address: BASE_ASSET_ADDRESS,
-        abi: ERC20_APPROVE_ABI,
-        functionName: "approve",
-        args: [vault.address, 0n],
-        account: userAddress,
-        chain: walletClient.chain!,
-      });
-      appendLog(`Submitted: ${hash}, waiting for confirmation...`);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      appendLog(`Confirmed onchain: status=${receipt.status}, txHash=${hash}`);
+      const hash = await approveSpend(walletClient, userAddress, vault.address, depositAmount);
+      appendLog(`Approve confirmed: ${hash}`);
+      await refreshVaultState();
     } catch (error) {
-      appendLog(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      appendLog(`Error approving: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeposit() {
+    if (!embeddedWallet || !userAddress) return;
+    setBusy(true);
+    try {
+      appendLog(`Depositing ${depositAmount} USDC into ${vault.label}...`);
+      const walletClient = await createPrivyWalletClient(embeddedWallet);
+      const hash = await depositToVault(walletClient, userAddress, vault.address, depositAmount);
+      appendLog(`Deposit confirmed: ${hash}`);
+      await refreshVaultState();
+    } catch (error) {
+      appendLog(`Error depositing: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleWithdraw() {
+    if (!embeddedWallet || !userAddress) return;
+    setBusy(true);
+    try {
+      appendLog(`Withdrawing ${withdrawAmount} USDC from ${vault.label}...`);
+      const walletClient = await createPrivyWalletClient(embeddedWallet);
+      const hash = await withdrawFromVault(walletClient, userAddress, vault.address, withdrawAmount);
+      appendLog(`Withdraw confirmed: ${hash}`);
+      await refreshVaultState();
+    } catch (error) {
+      appendLog(`Error withdrawing: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBusy(false);
     }
@@ -102,7 +164,7 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "sans-serif", maxWidth: 640, margin: "2rem auto", padding: "0 1rem" }}>
-      <h1>Mandate Protocol</h1>
+      <h1>Mandor Protocol</h1>
 
       {/* Visible regardless of wallet-connection state: anyone looking at
           a vault from the outside should be able to see its real, current
@@ -110,7 +172,16 @@ export default function App() {
           silently-rejected agent decision. */}
       <label>
         Vault:{" "}
-        <select value={vaultId} onChange={(e) => setVaultId(e.target.value)}>
+        <select
+          value={vaultId}
+          onChange={(e) => {
+            setVaultId(e.target.value);
+            // Cleared, not just left stale: a switched vault's timeline
+            // must never show the previous vault's entries until refreshed.
+            setTimelineEntries(null);
+            setVaultEvents(null);
+          }}
+        >
           {VAULTS.map((v) => (
             <option key={v.id} value={v.id}>
               {v.label}
@@ -119,16 +190,25 @@ export default function App() {
         </select>
       </label>
 
-      {vault.knownLimitations && vault.knownLimitations.length > 0 && (
-        <div style={{ background: "#fff3cd", border: "1px solid #ffcd39", padding: "1rem", margin: "1rem 0" }}>
-          <strong>Known limitations of this vault today:</strong>
-          <ul>
-            {vault.knownLimitations.map((limitation, i) => (
-              <li key={i}>{limitation}</li>
-            ))}
-          </ul>
-        </div>
+      <KnownLimitations limitations={vault.knownLimitations ?? []} />
+
+      {/* AI Decision Timeline: visible regardless of wallet-connection
+          state, same "explainability for anyone looking, not just a
+          depositor" principle as KnownLimitations above, see
+          docs/architecture.md's "AI Decision Timeline". */}
+      <h2>Decision Timeline</h2>
+      <button onClick={handleRefreshTimeline} disabled={timelineBusy}>
+        {timelineBusy ? "Loading..." : "Load decision timeline"}
+      </button>
+
+      {vaultEvents && (
+        <>
+          <h3>Pause history</h3>
+          <VaultLevelEvents events={vaultEvents} />
+        </>
       )}
+
+      {timelineEntries && <DecisionTimeline entries={timelineEntries} />}
 
       {!ready && <p>Loading...</p>}
 
@@ -143,16 +223,10 @@ export default function App() {
           <p>
             Wallet: <code>{userAddress}</code> (Arc Testnet)
           </p>
-          <button onClick={logout}>Log out</button>
-
-          <div>
-            <button onClick={handleRefreshVaultState} disabled={busy}>
-              Read vault state
-            </button>{" "}
-            <button onClick={handleTestApprove} disabled={busy}>
-              Test signing (approve 0)
-            </button>
-          </div>
+          <button onClick={logout}>Log out</button>{" "}
+          <button onClick={handleRefreshVaultState} disabled={busy}>
+            Read vault state
+          </button>
 
           {vaultState && (
             <ul>
@@ -163,6 +237,35 @@ export default function App() {
               <li>Paused: {String(vaultState.paused)}</li>
             </ul>
           )}
+
+          <h3>Deposit</h3>
+          {/* Repeated here, not just near the vault picker above: this is
+              the actual point of the deposit action, someone who scrolled
+              past the selector must still see it right before depositing
+              into v2, per Randy's explicit ask. */}
+          <KnownLimitations limitations={vault.knownLimitations ?? []} />
+          <div>
+            <input type="number" min="0" step="any" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} placeholder="e.g. 1" style={{ width: 100 }} />{" "}
+            USDC{" "}
+            {needsApproval ? (
+              <button onClick={handleApprove} disabled={busy}>
+                Approve
+              </button>
+            ) : (
+              <button onClick={handleDeposit} disabled={busy}>
+                Deposit
+              </button>
+            )}
+          </div>
+
+          <h3>Withdraw</h3>
+          <div>
+            <input type="number" min="0" step="any" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} placeholder="e.g. 1" style={{ width: 100 }} />{" "}
+            USDC{" "}
+            <button onClick={handleWithdraw} disabled={busy}>
+              Withdraw
+            </button>
+          </div>
         </>
       )}
 

@@ -7,4 +7,13 @@ import react from "@vitejs/plugin-react";
 // Vite's default VITE_-prefixed import.meta.env exposure automatically.
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      // server/timelineApi.ts, a read-only wrapper around
+      // buildDecisionTimeline (server/indexer/eventIndexer.ts). No
+      // secrets, unlike the shelved Circle proxy this same proxy pattern
+      // used to point at.
+      "/api/timeline": "http://localhost:8789",
+    },
+  },
 });

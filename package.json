@@ -1,10 +1,11 @@
 {
-  "name": "mandate-protocol",
+  "name": "mandor-protocol",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "test:agent": "node --import tsx --test agent/core/*.test.ts",
     "dev:frontend": "vite",
+    "dev:timeline-api": "node --use-system-ca --import tsx server/timelineApi.ts",
     "typecheck:frontend": "tsc -p src/tsconfig.json --noEmit"
   },
   "devDependencies": {

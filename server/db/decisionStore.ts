@@ -28,18 +28,32 @@ export class DecisionStore {
   // Anchored to this project's own root (shared/paths.ts), not
   // process.cwd(), so this always lands in the same gitignored data/
   // directory regardless of which directory the process is launched from.
-  constructor(dbPath: string = projectDataPath("mandate.db")) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS decisions (
-        decisionId TEXT PRIMARY KEY,
-        vaultId TEXT NOT NULL,
-        status TEXT NOT NULL,
-        queuedAt TEXT NOT NULL,
-        data TEXT NOT NULL
-      )
-    `);
+  //
+  // readOnly enforces "cannot write" at the SQLite connection layer
+  // itself (node:sqlite's own readOnly option), not merely "this caller
+  // happens not to call a write method". server/timelineApi.ts (the first
+  // network-facing surface reading this store) passes true, so even a
+  // future, careless change adding a mutating call there throws instead
+  // of silently succeeding. CREATE TABLE is itself a write, skipped
+  // entirely when readOnly, this only ever runs after
+  // scripts/runDecisionCycle.ts's real, mutating path has already created
+  // the table for real.
+  constructor(dbPath: string = projectDataPath("mandate.db"), readOnly: boolean = false) {
+    if (!readOnly) {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
+    this.db = new DatabaseSync(dbPath, { readOnly });
+    if (!readOnly) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS decisions (
+          decisionId TEXT PRIMARY KEY,
+          vaultId TEXT NOT NULL,
+          status TEXT NOT NULL,
+          queuedAt TEXT NOT NULL,
+          data TEXT NOT NULL
+        )
+      `);
+    }
   }
 
   /// @notice Called after every mutation (enqueue/confirm/reject/expire/

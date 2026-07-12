@@ -40,24 +40,32 @@ interface CursorRow {
 export class EventStore {
   private readonly db: DatabaseSync;
 
-  constructor(dbPath: string = projectDataPath("mandate.db")) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id TEXT PRIMARY KEY,
-        eventName TEXT NOT NULL,
-        transactionHash TEXT NOT NULL,
-        blockNumber TEXT NOT NULL,
-        data TEXT NOT NULL
-      )
-    `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS indexer_cursor (
-        contractAddress TEXT PRIMARY KEY,
-        lastProcessedBlock TEXT NOT NULL
-      )
-    `);
+  // readOnly enforces "cannot write" at the SQLite connection layer
+  // itself (node:sqlite's own readOnly option), see decisionStore.ts's
+  // matching constructor for the full reasoning, same rationale applies
+  // here for server/timelineApi.ts's read-only use of this store.
+  constructor(dbPath: string = projectDataPath("mandate.db"), readOnly: boolean = false) {
+    if (!readOnly) {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
+    this.db = new DatabaseSync(dbPath, { readOnly });
+    if (!readOnly) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY,
+          eventName TEXT NOT NULL,
+          transactionHash TEXT NOT NULL,
+          blockNumber TEXT NOT NULL,
+          data TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS indexer_cursor (
+          contractAddress TEXT PRIMARY KEY,
+          lastProcessedBlock TEXT NOT NULL
+        )
+      `);
+    }
   }
 
   /// @notice Uses INSERT OR IGNORE keyed on the stable id, so replaying an

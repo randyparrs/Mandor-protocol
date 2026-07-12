@@ -52,6 +52,24 @@ export interface DecisionPipelineEntry {
   // instead of fetching a second, independently-timed price for the same
   // execution, see executor/README.md.
   marketData: MarketData;
+  // Claude's extended-thinking trace for this proposal, explainability
+  // only, same zero-execution-authority rule as `decision.reasoning` (see
+  // shared/decision.ts's own doc comment), never read by anything with
+  // execution authority. null when the model produced no thinking block
+  // for this call (agent/core/loop.ts's own thinkingText is null in that
+  // case) or undefined for any entry enqueued before this field existed,
+  // the AI Decision Timeline UI must handle both the same way ("no
+  // thinking trace available").
+  thinkingText?: string | null;
+  // Real thinking-token usage from the API's own accounting
+  // (agent/core/loop.ts's own doc comment on ProposeDecisionResult),
+  // never estimated. Same optional/nullable shape and same
+  // "undefined for a pre-existing entry, null for a real call that used
+  // no thinking" distinction as thinkingText above, kept as a genuinely
+  // separate field (not folded into thinkingText) since it is a number
+  // meant for aggregate analysis (e.g. comparing average thinking-token
+  // spend across action types), not just an explainability string.
+  thinkingTokens?: number | null;
   // "high" only ever set by returnToQueueForReview (a keeper-side
   // self-consistency disagreement on EMERGENCY_EXIT_TO_STABLE), never by
   // enqueue itself, an ordinary fresh proposal is always "normal".
@@ -124,16 +142,27 @@ export class DecisionPipeline {
     input: ProposeDecisionInput,
     policyParams: Omit<OffchainPolicyCheckParams, "decision">,
   ): Promise<DecisionPipelineEntry> {
-    const { decision } = await proposeDecision(input);
+    const { decision, thinkingText, thinkingTokens } = await proposeDecision(input);
     const policyCheck = checkPolicyOffchain({ ...policyParams, decision });
-    return this.enqueue(decision, policyCheck, policyParams.policyLimits.maxTradesPerDay, input.marketData);
+    return this.enqueue(decision, policyCheck, policyParams.policyLimits.maxTradesPerDay, input.marketData, thinkingText, thinkingTokens);
   }
 
   /// @notice The pure, synchronous half of the pipeline: given an
   /// already-produced decision and its pre-check result, computes anomaly
   /// flags and queues it with a hard expiresAt. Split out from
   /// proposeAndQueue so it can be unit tested without a real API call.
-  enqueue(decision: VaultDecision, policyCheck: PolicyCheckResult, maxTradesPerDay: number, marketData: MarketData): DecisionPipelineEntry {
+  /// thinkingText/thinkingTokens are optional (default to undefined,
+  /// distinct from a real null meaning "the model produced no thinking
+  /// block for this call") purely so every existing fixture-based test
+  /// call site stays valid unchanged.
+  enqueue(
+    decision: VaultDecision,
+    policyCheck: PolicyCheckResult,
+    maxTradesPerDay: number,
+    marketData: MarketData,
+    thinkingText?: string | null,
+    thinkingTokens?: number | null,
+  ): DecisionPipelineEntry {
     this.sweepExpired();
 
     const priorProposalsToday = this.countRecentProposals(decision.vaultId, new Date());
@@ -152,6 +181,8 @@ export class DecisionPipeline {
       policyCheck,
       anomalyFlags,
       marketData,
+      thinkingText,
+      thinkingTokens,
       priority: "normal",
     };
     this.entries.set(entry.decisionId, entry);
