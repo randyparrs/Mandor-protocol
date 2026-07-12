@@ -1,11 +1,11 @@
-# Mandate Protocol: Architecture (Phase 1)
+# Mandor Protocol: Architecture (Phase 1)
 
 ## The one governing decision this whole architecture is built around
 
 Vpay's `agent/core` never signs because Vpay never held pooled third-party
-capital, the user's own wallet was always the actor. Mandate Protocol *does*
+capital, the user's own wallet was always the actor. Mandor Protocol *does*
 hold pooled capital, so Vpay's two-halves pattern (propose, then sign) isn't
-sufficient alone. Mandate needs a third, non-negotiable gate between the two:
+sufficient alone. Mandor needs a third, non-negotiable gate between the two:
 a deterministic on-chain policy check that neither half can bypass.
 
 ```

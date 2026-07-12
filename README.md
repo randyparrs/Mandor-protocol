@@ -1,4 +1,4 @@
-# Mandate Protocol
+# Mandor Protocol
 
 An AI-native investment protocol on Arc Network. Users deposit capital into
 vaults; each vault is managed by an autonomous Claude agent that proposes

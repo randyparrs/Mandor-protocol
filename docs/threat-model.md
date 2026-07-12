@@ -1,4 +1,4 @@
-# Mandate Protocol: Threat Model (Phase 1)
+# Mandor Protocol: Threat Model (Phase 1)
 
 ## Platform-level risks
 
