@@ -166,3 +166,49 @@ basis as the first deployment, well within the ~0.10-0.13 USDC estimate
 projected before running. Notably cheaper than the first deployment
 (0.249 USDC) despite deploying a vault with one more registered asset,
 since none of the shared protocol infrastructure needed redeploying.
+
+### Known limitation, discovered after this vault was created
+
+This vault's base asset is native USDC (`0x3600...`, see `vault.asset()`
+above), but querying the real UnitFlowV3 Factory live
+(`getPool(USDC, cirBTC, fee)` at every standard fee tier) found **no pool
+at all** pairing native USDC with cirBTC, and the one USDC/EURC pool that
+does exist (`0x3Ca9475a33Dd9401163Eed2ab4963EcA8Fb3BDCC`, fee 100) has
+**zero real liquidity** (`liquidity() == 0`, both token balances 0, an
+initialized shell nobody ever funded). The only pool with real,
+substantial liquidity anywhere verified in this project is WUSDC/cirBTC
+(a different token from native USDC, see the "Verified" section of
+`docs/arc-facts-to-verify.md`). **This vault cannot execute a real swap
+into cirBTC today.** `executor/keeperService.ts`'s real swap-leg
+construction is built and verified against real onchain infrastructure
+(two Foundry fork tests against the real WUSDC/cirBTC pool), the mechanism
+itself is not the gap, this vault's actual base asset simply has nowhere
+to trade into cirBTC yet on this DEX. See `executor/README.md` for the
+full writeup and the reasoning for not deploying a third vault around
+WUSDC to work around it.
+
+### Second restriction, a hard code-level block, not just a liquidity gap
+
+Separately from the liquidity gap above: `agent/core/tools/getMarketData.ts`'s
+`getVolatileAssetPriceUSDC` (cirBTC's only price source) sets
+`referencePriceUSDC` equal to `priceUSDC` itself, since no genuinely
+independent reference price exists for cirBTC today (confirmed live
+against Chainlink's own official Price Feed Contract Addresses page, no
+Data Feed of any kind is deployed on Arc yet, see
+`docs/arc-facts-to-verify.md`). That self-reference makes
+`VaultPolicy.sol`'s `oracleMaxDeviationBps` anti-manipulation check a
+permanent no-op for cirBTC specifically, the asset with the thinnest,
+most manipulable liquidity in this project. `executor/keeperService.ts`'s
+`requireIndependentReferencePriceToBuy` hard-blocks (throws before ever
+building a swap leg or reaching `simulateContract`) any `ENTER` into
+cirBTC or any `REBALANCE` that increases cirBTC's target allocation,
+until this changes. Selling is unaffected: `EXIT`, a `REBALANCE`
+decreasing cirBTC's target, and `EMERGENCY_EXIT_TO_STABLE` all still work
+normally, reducing exposure can never be the harmful direction for this
+specific manipulation. **In practice today, this vault can only hold or
+reduce cirBTC exposure, never increase it**, independent of the liquidity
+gap above. Also disclosed in the vault's own user-facing description
+(`src/lib/vaults.ts`'s `knownLimitations`, rendered in `src/App.tsx`
+regardless of wallet-connection state) and told directly to the agent
+itself (`scripts/runDecisionCycle.ts`'s `V2_CIRBTC_RESTRICTION_NOTE`), so
+this is never a silent surprise at any layer, ops, depositor, or agent.

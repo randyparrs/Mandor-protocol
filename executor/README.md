@@ -57,13 +57,125 @@ webhook) exists anywhere in this repo yet, a richer one is additive later.
   `DecisionPipeline.returnToQueueForReview`, and fires a `"critical"`
   alert, never executes on stale ops authorization.
 
-**Explicitly out of scope this round:** real swap-leg construction (router
-quoting via the real Quoter, slippage tolerance) for
-`ENTER`/`EXIT`/`REBALANCE`. Today's live vault is USDC-only, so `HOLD` and
-`EMERGENCY_EXIT_TO_STABLE` never need a swap leg, same "no live consequence
-yet" reasoning already used for `agent/policy/offchainPolicyCheck.ts`'s
-ENTER/EXIT projection gap. `buildSwapLegs` throws a clear error rather than
-guess a swap if a confirmed decision ever actually needs one.
+**Real swap-leg construction, built:** `buildSwapLegs` now sizes and
+executes real `ENTER`/`EXIT`/`REBALANCE` swaps.
+- **Quote before building:** `IQuoter.quoteExactInputSingle`
+  (`contracts/interfaces/IQuoter.sol`, the real UnitFlowV3 Quoter's
+  verified interface, not assumed from a generic Uniswap V3 template),
+  called fresh via a plain `eth_call` right before building the leg,
+  never reusing the reasoning-time price for this step, `minAmountOut`
+  must reflect the pool's current state at submission time.
+- **Price reuse, not re-fetch:** `amountIn` sizing (how much of the base
+  asset an `ENTER` spends, how much of the target asset a `REBALANCE`
+  delta implies) is always derived from the SAME `MarketData` price
+  already reused elsewhere in this file, never a second, independently
+  fetched value. `agent/core/tools/getMarketData.ts`'s
+  `getVolatileAssetPriceUSDC` closes the pricing gap for cirBTC (no CEX/
+  oracle source exists), reading the real pool's `slot0()` directly for a
+  zero-price-impact spot price.
+- **Slippage tolerance:** 3% (`SLIPPAGE_TOLERANCE_BPS`), deliberately more
+  generous than mainnet-depth assumptions, the only real pool this has
+  ever been verified against (WUSDC/cirBTC) is extremely thin (~0.00048
+  cirBTC total reserve).
+- **Two real bugs found and fixed while building this:**
+  1. `getVolatileAssetPriceUSDC` originally quoted "1 whole cirBTC" as a
+     probe amount, which for this thin pool means simulating a sell 2000x
+     its real liquidity, crashing the quoted price to a small fraction of
+     reality (confirmed live: ~$304 instead of the real ~$276,073 spot
+     price). Fixed by reading the pool's `slot0()` `sqrtPriceX96` directly
+     instead, a genuine zero-price-impact spot price.
+  2. `buildOnchainPrices` scaled every cached price by the PRICED asset's
+     own decimals, but `MandateVault.sol`'s `_valueInUSDC` formula
+     requires scaling by the BASE asset's decimals instead. This was
+     latent and harmless as long as only the base asset itself was ever
+     priced (its own cached price is never read by `_valueInUSDC`), and
+     went live and wrong the moment cirBTC needed pricing, caught by a
+     new Foundry fork test failing to revert as expected (an under-scaled
+     price made cirBTC's computed `valueUSDC` always ~0, trivially
+     passing any allocation cap). Both fixes documented in
+     `keeperService.ts`'s own comments at the fix site.
+- **REBALANCE** reduces to one leg per non-base asset whose target bps
+  differs from current, reusing the same per-asset quote-and-build helper
+  ENTER/EXIT use; today's real vaults hold at most one non-base asset, so
+  this only ever produces 0 or 1 legs in practice, written generally
+  rather than hardcoded to that shape.
+- **Not yet built:** an abnormal-delta bound specifically for
+  `ENTER`/`EXIT`/`REBALANCE` (swaps.length > 0), beyond what
+  `minAmountOut`/slippage tolerance and `VaultPolicy`'s own pre/post
+  `validateDecision` calls already enforce.
+- **Two different "prices" in this file, by design, not an
+  inconsistency:** (1) the reasoning/sizing price (`marketData.prices`,
+  reused from proposal time, refreshed only once stale relative to the
+  vault's own `oracleMaxStalenessSeconds`) decides how much to trade, and
+  must stay stable between proposal and execution so ops confirms the same
+  numbers the keeper later acts on; (2) the slippage-protection quote
+  (`quoteAndBuildLeg`'s fresh `IQuoter.quoteExactInputSingle` call, always
+  refetched, never reused) decides `minAmountOut`, and must reflect the
+  pool's actual state at submission time, which by definition cannot come
+  from an earlier moment. Reusing (1) for `minAmountOut` would
+  under-protect a swap against a pool that moved since proposal;
+  re-fetching for (2) would defeat proposal-time price consistency. See
+  the doc comment directly above `quoteAndBuildLeg` in `keeperService.ts`
+  for the same statement kept next to the code it describes.
+
+**A real oracle-manipulation gap found and hard-blocked, not just
+documented:** the same `slot0()`-derived spot price
+`getVolatileAssetPriceUSDC` (`agent/core/tools/getMarketData.ts`) returns
+for cirBTC flows, unmodified, into `buildOnchainPrices`'s output, which
+becomes `executeDecision`'s real `prices` argument, which `VaultPolicy.sol`
+uses for both its `maxAllocationBpsPerAsset[cirBTC]` cap check and its
+`oracleMaxDeviationBps` anti-manipulation check
+(`_deviationBps(price, referencePrice)`). Because
+`getVolatileAssetPriceUSDC` sets `referencePriceUSDC` equal to `priceUSDC`
+itself (no genuinely independent second source exists for cirBTC, see
+below), that deviation check is a permanent no-op for this asset, the
+asset with the thinnest, most manipulable liquidity in the project
+(~0.00048 cirBTC pool reserve). Confirmed live: no real Chainlink Data
+Feed exists on Arc today despite the "Chainlink Scale" partnership
+announcement (`docs/arc-facts-to-verify.md`), so there is no drop-in real
+independent reference price to wire in instead, yet.
+
+**Fix, a hard check/require, not just a comment:**
+`agent/core/tools/getMarketData.ts`'s `hasIndependentReferencePrice(asset)`
+returns `false` for any asset without a genuinely independent reference
+source (fails closed; only `STABLE_ASSET_CONFIG` entries like USDC return
+`true` today, cirBTC returns `false`). `keeperService.ts`'s
+`requireIndependentReferencePriceToBuy(symbol)` throws before building any
+swap leg that would BUY such an asset, refusing `ENTER` into cirBTC and any
+`REBALANCE` leg that increases cirBTC's target weight. **Selling is
+deliberately not blocked**: `EXIT`, a `REBALANCE` leg that decreases
+cirBTC's target, and `EMERGENCY_EXIT_TO_STABLE` (which already skips
+`VaultPolicy`'s allocation/deviation checks entirely via its own early
+return, and must keep working unconditionally as the safety valve) all
+still execute normally, since reducing exposure to an asset can never be
+the harmful direction for this specific manipulation (spoofing a price to
+make an over-cap allocation look compliant only matters when new
+allocation is being authorized, not removed). Revisit once
+`hasIndependentReferencePrice` can honestly return `true` for cirBTC, e.g.
+a real Chainlink BTC/USD feed goes live on Arc (verified live, not from an
+announcement).
+
+**A real, verified liquidity blocker, not a code gap, documented plainly
+per Randy's explicit ask:** querying the real UnitFlowV3 Factory live
+found no pool at any fee tier pairing native USDC (the real v2 vault's
+actual base asset) with cirBTC, and the one USDC/EURC pool that exists has
+zero real liquidity (`liquidity() == 0`). The only pool with real,
+substantial liquidity anywhere in this project's verified inventory is
+WUSDC/cirBTC, and WUSDC is a different token from native USDC. **The real
+v2 vault (`0x6a00e9de0b830Fd2Bc37db7C19Ae8b67a0df1862`) cannot execute a
+real swap into cirBTC today, full stop.** The mechanism itself is real and
+verified against real onchain infrastructure (two new Foundry fork tests
+in `test/MandateVaultArcFork.t.sol`, against the real WUSDC/cirBTC pool,
+the only one with real liquidity), the live v2 vault specifically just has
+nothing to trade into. `scripts/runDecisionCycle.ts`'s hourly cycle
+continuing to propose against v2 and occasionally landing on a non-HOLD
+action that then sits pending, or fails cleanly at the keeper's
+pre-execution offchain re-check, is expected, correct behavior given
+today's real testnet liquidity, not a bug to chase. A v3 vault using WUSDC
+as its base asset was explicitly considered and rejected: WUSDC is not the
+decided production base asset (native USDC is, per the earlier decimals
+investigation), not worth another deployment to test against an asset
+already ruled out as the real path.
 
 `KeeperServiceConfig` exposes injectable seams
 (`getVaultStateFn`/`buildPolicyLimitsStructFn`/`getMarketDataFn`/

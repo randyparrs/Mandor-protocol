@@ -3,7 +3,7 @@ import type { AssetSymbol } from "./types.js";
 import type { PolicyLimits } from "../../shared/policyTypes.js";
 import type { ProposeDecisionInput } from "./loop.js";
 import { getVaultState, type KnownAsset } from "./tools/getVaultState.js";
-import { getMarketData } from "./tools/getMarketData.js";
+import { getMarketData, getVolatileAssetPriceUSDC } from "./tools/getMarketData.js";
 
 const MANDATE_VAULT_POLICY_GETTER_ABI = [
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -142,14 +142,25 @@ export async function buildProposeDecisionInput(params: BuildProposeDecisionInpu
     functionName: "policy",
   });
 
-  const [vaultState, policyLimitsText, marketData] = await Promise.all([
+  // Assets known to this vault but not in stableAssets need a different
+  // real price source (getVolatileAssetPriceUSDC's on-chain quoter, not
+  // CoinGecko), see agent/core/tools/getMarketData.ts. Both run in
+  // parallel and are merged into one MarketData.prices array so the model
+  // and checkPolicyOffchain see every asset's price uniformly, regardless
+  // of which real source it actually came from.
+  const volatileAssets = params.assets.filter((a) => !params.stableAssets.includes(a.symbol) && !a.isBaseAsset);
+
+  const [vaultState, policyLimitsText, stablePrices, volatilePrices] = await Promise.all([
     getVaultState(params.publicClient, params.vaultAddress, params.assets),
     buildPolicyLimitsText(params.publicClient, policyAddress, params.assets),
     getMarketData(
       params.stableAssets.map((asset) => ({ asset })),
       params.untrustedMarketContext,
     ),
+    Promise.all(volatileAssets.map((a) => getVolatileAssetPriceUSDC(params.publicClient, a.symbol))),
   ]);
+
+  const marketData = { prices: [...stablePrices.prices, ...volatilePrices], untrustedContext: stablePrices.untrustedContext };
 
   return {
     vaultId: params.vaultAddress,

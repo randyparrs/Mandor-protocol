@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapRouter} from "../contracts/interfaces/ISwapRouter.sol";
+import {IQuoter} from "../contracts/interfaces/IQuoter.sol";
 import {MandateVault} from "../contracts/MandateVault.sol";
 import {VaultPolicy} from "../contracts/VaultPolicy.sol";
 import {MandateRoles} from "../contracts/access/MandateRoles.sol";
@@ -67,6 +68,7 @@ contract MandateVaultArcForkTest is Test {
 
     address internal constant ROUTER = 0x509cF58CdA08C7aee83a2BdBb4A1Eac907343D01;
     address internal constant FACTORY = 0xAb6A8AAb7d490007634ef59d424b5d89688a1971;
+    address internal constant QUOTER = 0x121aeB6DEf00F6F67665008CaC1C19805886ed1a;
     address internal constant WUSDC = 0x911b4000D3422F482F4062a913885f7b035382Df;
     address internal constant EURC = 0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a;
     address internal constant CIRBTC = 0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF;
@@ -196,5 +198,161 @@ contract MandateVaultArcForkTest is Test {
         assertTrue(ok);
         assertGt(vault.ledgerOf(CIRBTC), 0, "the vault must actually hold cirBTC after a real swap");
         assertEq(vault.ledgerOf(WUSDC), depositAmount - swapAmount);
+    }
+
+    /// @dev The keeper-side design's actual production path: quote against
+    /// the real Quoter first (executor/keeperService.ts's quoteAndBuildLeg),
+    /// apply a real slippage tolerance, then submit. Unlike the test above
+    /// (minAmountOut: 1, essentially unprotected), this proves a real,
+    /// meaningfully-protective minAmountOut, derived from a real onchain
+    /// quote, still lets a real swap through the real router and pool.
+    function test_executeDecisionRealSwapWithQuoterDerivedMinAmountOut() public {
+        uint256 depositAmount = 50e18;
+        vm.deal(address(this), depositAmount);
+        IWUSDC(WUSDC).deposit{value: depositAmount}();
+        IWUSDC(WUSDC).approve(address(vault), depositAmount);
+        vault.deposit(depositAmount, address(this));
+
+        uint256 swapAmount = 5e18;
+
+        // The real quote, exactly what executor/keeperService.ts's
+        // quoteAndBuildLeg does via a plain eth_call, here via a real
+        // Solidity call against the same real, verified Quoter, same
+        // 3% slippage tolerance keeperService.ts applies.
+        uint256 quotedAmountOut = IQuoter(QUOTER).quoteExactInputSingle(WUSDC, CIRBTC, WUSDC_CIRBTC_FEE, swapAmount, 0);
+        assertGt(quotedAmountOut, 0, "the real Quoter must return a nonzero quote for this real, liquid pool");
+        uint256 minAmountOut = (quotedAmountOut * 9700) / 10_000;
+
+        IVaultPolicy.TargetAllocation[] memory targetAllocations = new IVaultPolicy.TargetAllocation[](2);
+        targetAllocations[0] = IVaultPolicy.TargetAllocation({asset: WUSDC, targetWeightBps: 9000});
+        targetAllocations[1] = IVaultPolicy.TargetAllocation({asset: CIRBTC, targetWeightBps: 1000});
+
+        MandateVault.SwapLeg[] memory swaps = new MandateVault.SwapLeg[](1);
+        swaps[0] = MandateVault.SwapLeg({
+            router: ROUTER,
+            tokenIn: WUSDC,
+            tokenOut: CIRBTC,
+            fee: WUSDC_CIRBTC_FEE,
+            amountIn: swapAmount,
+            minAmountOut: minAmountOut,
+            deadline: block.timestamp + 3600,
+            sqrtPriceLimitX96: 0
+        });
+
+        bool ok = vault.executeDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.REBALANCE,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: targetAllocations
+            }),
+            _cirBtcPrice(swapAmount, quotedAmountOut),
+            swaps
+        );
+
+        assertTrue(ok);
+        assertGe(vault.ledgerOf(CIRBTC), minAmountOut, "actual amountOut must satisfy the real quoter-derived minAmountOut");
+    }
+
+    /// @dev A real, live-derived cirBTC price, scaled to the BASE asset's
+    /// own decimals (WUSDC, 18), not cirBTC's own (8), per
+    /// MandateVault.sol's _valueInUSDC formula, verified by algebra and by
+    /// this exact scaling bug once causing
+    /// test_executeDecisionRevertsAndRollsBackRealSwap_WhenPolicyViolated
+    /// to fail to revert as expected (an under-scaled price made cirBTC's
+    /// computed valueUSDC always ~0, see executor/keeperService.ts's
+    /// buildOnchainPrices for the same fix applied there). Derived from
+    /// the real quote itself (swapAmount WUSDC in, quotedAmountOut cirBTC
+    /// out), not a separately hardcoded constant that could drift from the
+    /// pinned block's real pool state.
+    function _cirBtcPrice(uint256 swapAmountWUSDC, uint256 quotedAmountOutCirBTC) internal view returns (IVaultPolicy.AssetPrice[] memory prices) {
+        uint256 price = (swapAmountWUSDC * 1e8) / quotedAmountOutCirBTC;
+        prices = new IVaultPolicy.AssetPrice[](1);
+        prices[0] = IVaultPolicy.AssetPrice({asset: CIRBTC, price: price, referencePrice: price, updatedAt: block.timestamp});
+    }
+
+    /// @dev Confirms the atomic revert-and-rollback (already proven with a
+    /// mocked router in test/MandateVault.ts) still holds with a REAL swap
+    /// leg through the real router and pool, per Randy's explicit ask:
+    /// deliberately sizes the swap so the resulting allocation exceeds a
+    /// separate, stricter policy's maxAllocationBpsPerAsset[cirBTC], the
+    /// whole transaction (including the already-executed real router swap)
+    /// must revert and leave the vault's ledger completely untouched.
+    function test_executeDecisionRevertsAndRollsBackRealSwap_WhenPolicyViolated() public {
+        MandateVault strictVault = new MandateVault(IERC20(WUSDC), address(roles), ROUTER, "Mandate WUSDC Vault (strict)", "mWUSDCs", _cirBtcOnly(), address(this));
+
+        address[] memory assets = new address[](2);
+        assets[0] = WUSDC;
+        assets[1] = CIRBTC;
+        uint256[] memory maxBps = new uint256[](2);
+        maxBps[0] = 10_000;
+        maxBps[1] = 100; // 1%, far below the 10% this swap targets
+        address[] memory stableAssets = new address[](1);
+        stableAssets[0] = WUSDC;
+
+        VaultPolicy strictPolicy = new VaultPolicy(
+            VaultPolicy.ConstructorLimits({
+                vault: address(strictVault),
+                roles: address(roles),
+                maxDrawdownBps: 1000,
+                maxTradesPerDay: 5,
+                minStableAllocationBps: 2000,
+                oracleMaxStalenessSeconds: 3600,
+                oracleMaxDeviationBps: 500,
+                maxDrawdownSpeedBpsPerWindow: 300,
+                drawdownSpeedWindowSeconds: 3600,
+                assets: assets,
+                maxAllocationBps: maxBps,
+                stableAssets: stableAssets
+            })
+        );
+        strictVault.setPolicy(address(strictPolicy));
+        strictVault.setAutoPauseBountyAmount(0);
+
+        uint256 depositAmount = 50e18;
+        vm.deal(address(this), depositAmount);
+        IWUSDC(WUSDC).deposit{value: depositAmount}();
+        IWUSDC(WUSDC).approve(address(strictVault), depositAmount);
+        strictVault.deposit(depositAmount, address(this));
+
+        uint256 swapAmount = 5e18; // targets 10% cirBTC, exceeds the 1% cap above
+        uint256 quotedAmountOut = IQuoter(QUOTER).quoteExactInputSingle(WUSDC, CIRBTC, WUSDC_CIRBTC_FEE, swapAmount, 0);
+        uint256 minAmountOut = (quotedAmountOut * 9700) / 10_000;
+
+        IVaultPolicy.TargetAllocation[] memory targetAllocations = new IVaultPolicy.TargetAllocation[](2);
+        targetAllocations[0] = IVaultPolicy.TargetAllocation({asset: WUSDC, targetWeightBps: 9000});
+        targetAllocations[1] = IVaultPolicy.TargetAllocation({asset: CIRBTC, targetWeightBps: 1000});
+
+        MandateVault.SwapLeg[] memory swaps = new MandateVault.SwapLeg[](1);
+        swaps[0] = MandateVault.SwapLeg({
+            router: ROUTER,
+            tokenIn: WUSDC,
+            tokenOut: CIRBTC,
+            fee: WUSDC_CIRBTC_FEE,
+            amountIn: swapAmount,
+            minAmountOut: minAmountOut,
+            deadline: block.timestamp + 3600,
+            sqrtPriceLimitX96: 0
+        });
+
+        vm.expectRevert();
+        strictVault.executeDecision(
+            IVaultPolicy.Decision({
+                action: IVaultPolicy.DecisionAction.REBALANCE,
+                asset: address(0),
+                amount: 0,
+                targetAllocations: targetAllocations
+            }),
+            _cirBtcPrice(swapAmount, quotedAmountOut),
+            swaps
+        );
+
+        assertEq(strictVault.ledgerOf(WUSDC), depositAmount, "a reverted executeDecision must leave the base asset ledger completely untouched");
+        assertEq(strictVault.ledgerOf(CIRBTC), 0, "a reverted executeDecision must never leave a partial real swap's proceeds in the ledger");
+    }
+
+    function _cirBtcOnly() internal pure returns (address[] memory otherAssets) {
+        otherAssets = new address[](1);
+        otherAssets[0] = CIRBTC;
     }
 }

@@ -34,7 +34,18 @@ const USDC_ADDRESS = "0x3600000000000000000000000000000000000000" as const;
 const CIRBTC_ADDRESS = "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF" as const;
 
 const STRATEGY_VERSION = "v1";
-const STRATEGY_CONFIG_TEXT = "Conservative income strategy. Prefer HOLD unless there is a clear, well-supported reason to rebalance.";
+const BASE_STRATEGY_CONFIG_TEXT = "Conservative income strategy. Prefer HOLD unless there is a clear, well-supported reason to rebalance.";
+
+// Told to the agent itself, not just enforced downstream: without this,
+// the first time the agent proposed an ENTER/REBALANCE increasing cirBTC,
+// it would sail through proposal and ops confirmation only to be hard-
+// rejected by executor/keeperService.ts's requireIndependentReferencePriceToBuy
+// at execution time, with no obvious explanation to whoever confirmed it.
+// Telling the agent up front means it simply won't propose the blocked
+// action, matching Randy's own "not a silent surprise" standard, applied
+// to the reasoning layer, not just the execution layer.
+const V2_CIRBTC_RESTRICTION_NOTE =
+  "This vault's strategy allows holding cirBTC, but today you must never propose ENTER into cirBTC or any REBALANCE that increases cirBTC's target allocation: no genuinely independent reference price exists for cirBTC yet (see docs/arc-facts-to-verify.md), so any such action is hard-rejected at execution time regardless of what you propose. Reducing cirBTC exposure (EXIT, REBALANCE decreasing cirBTC's target, EMERGENCY_EXIT_TO_STABLE) remains fully available and unaffected.";
 
 interface VaultCycleConfig {
   label: string;
@@ -46,6 +57,8 @@ interface VaultCycleConfig {
   vaultCreationBlock: bigint;
   assets: KnownAsset[];
   stableAssets: AssetSymbol[];
+  // Defaults to BASE_STRATEGY_CONFIG_TEXT when omitted, see runCycleForVault.
+  strategyConfigText?: string;
 }
 
 const VAULTS: VaultCycleConfig[] = [
@@ -67,6 +80,7 @@ const VAULTS: VaultCycleConfig[] = [
       { symbol: "cirBTC", address: CIRBTC_ADDRESS },
     ],
     stableAssets: ["USDC"],
+    strategyConfigText: `${BASE_STRATEGY_CONFIG_TEXT} ${V2_CIRBTC_RESTRICTION_NOTE}`,
   },
 ];
 
@@ -74,12 +88,13 @@ async function runCycleForVault(publicClient: PublicClient, decisionStore: Decis
   console.log(`\n=== ${config.label}: ${config.vaultAddress} ===`);
   const pipeline = new DecisionPipeline(decisionStore);
 
+  const strategyConfigText = config.strategyConfigText ?? BASE_STRATEGY_CONFIG_TEXT;
   const policyLimits = await buildPolicyLimitsStruct(publicClient, config.vaultAddress, config.policyAddress, config.assets);
   const input = await buildProposeDecisionInput({
     publicClient,
     vaultAddress: config.vaultAddress,
     strategyVersion: STRATEGY_VERSION,
-    strategyConfigText: STRATEGY_CONFIG_TEXT,
+    strategyConfigText,
     assets: config.assets,
     stableAssets: config.stableAssets,
   });
@@ -104,7 +119,7 @@ async function runCycleForVault(publicClient: PublicClient, decisionStore: Decis
     assets: config.assets,
     stableAssets: config.stableAssets,
     strategyVersion: STRATEGY_VERSION,
-    strategyConfigText: STRATEGY_CONFIG_TEXT,
+    strategyConfigText,
     pipeline,
   });
   await keeper.runOnce();

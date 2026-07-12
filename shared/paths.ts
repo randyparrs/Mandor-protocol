@@ -16,3 +16,14 @@ const PROJECT_ROOT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), 
 export function projectDataPath(...segments: string[]): string {
   return path.join(PROJECT_ROOT, "data", ...segments);
 }
+
+/// @notice Builds a path relative to the project's own root (e.g. `.env`),
+/// stable regardless of process.cwd(). Third real occurrence of the same
+/// process.cwd()-dependent bug class this project has hit
+/// (executor/paperExecutor.ts, server/db/decisionStore.ts, and now
+/// vite.config.ts/server/circleWalletProxy.ts's .env resolution), reuse
+/// this instead of another one-off fileURLToPath(new URL(...)) fix the
+/// next time it comes up.
+export function projectRootPath(...segments: string[]): string {
+  return path.join(PROJECT_ROOT, ...segments);
+}

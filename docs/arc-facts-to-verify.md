@@ -5,7 +5,6 @@ official Arc/Circle docs at the time) before any real contract code assumes
 it's true. This project's standing rule: never guess unverified onchain/SDK
 facts.
 
-- [ ] Chainlink oracle feed availability on Arc, for USDC/EURC/USYC/cirBTC pricing
 - [ ] ERC-8004 tooling/support for onchain agent identity/attestation
 - [ ] Account abstraction support (4337 bundlers and/or 7702-style delegation) on Arc
 - [ ] A Forta-equivalent or any real-time onchain monitoring vendor with Arc coverage
@@ -80,6 +79,28 @@ facts.
       real pools on a fork of Arc Testnet pinned to block `50846709` for
       reproducibility (re-pin to a fresh block, and re-verify reserves with
       the same `eth_call balanceOf` method used here, periodically).
+
+- [x] **Chainlink oracle feed availability on Arc, for USDC/EURC/USYC/cirBTC
+      pricing: no real Data Feed exists on Arc today.** Checked live on
+      2026-07-11 against Chainlink's own official Price Feed Contract
+      Addresses page (docs.chain.link/data-feeds/price-feeds/addresses),
+      both the Mainnet and Testnet network selectors: searching "Arc"
+      returns "No chains found matching 'arc'" (confirmed via the page's
+      own live network-search UI, not a stale cache). Separately confirmed
+      via Chainlink's CRE release notes: "Arc Testnet" is listed there
+      (added 2026-01-29), but only for CRE (Chainlink Runtime Environment)
+      workflow support, a different product, not Data Feeds/price feeds.
+      This is despite Arc having joined "Chainlink Scale" (a partnership
+      announcement covering CCIP, Data Streams, Data Feeds, and Proof of
+      Reserve) around the same time; the announcement is real, but the
+      actual Data Feeds product is not yet live on Arc. Consequence: no
+      genuinely independent BTC/USD reference price exists for cirBTC yet,
+      see `agent/core/tools/getMarketData.ts`'s `hasIndependentReferencePrice`
+      and `executor/keeperService.ts`'s `requireIndependentReferencePriceToBuy`,
+      which hard-block buying cirBTC onchain until this changes. Revisit by
+      re-running the same live search, and if a feed appears, verify it for
+      real (`eth_getCode` + a real `latestRoundData()` call) before trusting
+      it, same standard as everything else in this file.
 
 ## Blocking, must be resolved before Phase 2 is considered fully closed
 

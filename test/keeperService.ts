@@ -21,7 +21,13 @@ import type { ProposeDecisionResult } from "../agent/core/loop.js";
 const TEST_PRIVATE_KEY = "0x852612fe3a79b9e5cf233469ff9a1a885d3ac262d3f5949bac68f3d433123f51" as const;
 const VAULT_ADDRESS = "0x9D1b2853722bc69C062D044D74DBeFae430422be" as const;
 const USDC_ADDRESS = "0x3600000000000000000000000000000000000000" as const;
+const CIRBTC_ADDRESS = "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF" as const;
 const ASSETS = [{ symbol: "USDC" as const, address: USDC_ADDRESS, isBaseAsset: true }];
+const ASSETS_V2 = [
+  { symbol: "USDC" as const, address: USDC_ADDRESS, isBaseAsset: true },
+  { symbol: "cirBTC" as const, address: CIRBTC_ADDRESS },
+];
+const ASSET_DECIMALS_V2: Record<string, number> = { [USDC_ADDRESS.toLowerCase()]: 6, [CIRBTC_ADDRESS.toLowerCase()]: 8 };
 
 function decision(overrides: Partial<VaultDecision> = {}): VaultDecision {
   return {
@@ -85,6 +91,8 @@ function makeFakePublicClient(opts: {
   totalAssetsSequence?: bigint[];
   simulateShouldThrow?: boolean;
   receiptStatus?: "success" | "reverted";
+  assetDecimalsByAddress?: Record<string, number>;
+  quoteAmountOut?: bigint;
 } = {}) {
   const calls: FakeCall[] = [];
   const totalAssetsSequence = opts.totalAssetsSequence ?? [5_000_000n, 5_000_000n];
@@ -94,11 +102,17 @@ function makeFakePublicClient(opts: {
     async readContract(params: { functionName: string; args?: unknown[] }) {
       calls.push({ functionName: params.functionName, args: params.args });
       if (params.functionName === "policy") return "0xPolicyAddress0000000000000000000000000";
-      if (params.functionName === "assetDecimals") return 6;
+      if (params.functionName === "assetDecimals") {
+        const address = (params.args?.[0] as string | undefined)?.toLowerCase();
+        return (address && opts.assetDecimalsByAddress?.[address]) ?? 6;
+      }
       if (params.functionName === "totalAssets") {
         const value = totalAssetsSequence[Math.min(totalAssetsCallIndex, totalAssetsSequence.length - 1)];
         totalAssetsCallIndex++;
         return value;
+      }
+      if (params.functionName === "quoteExactInputSingle") {
+        return opts.quoteAmountOut ?? 0n;
       }
       throw new Error(`fake readContract: unexpected functionName ${params.functionName}`);
     },
@@ -122,10 +136,10 @@ function makeFakeWalletClient() {
   let inFlight = 0;
   let maxConcurrent = 0;
   const walletClient = {
-    async writeContract(params: { functionName: string }) {
+    async writeContract(params: { functionName: string; args?: unknown[] }) {
       inFlight++;
       maxConcurrent = Math.max(maxConcurrent, inFlight);
-      calls.push({ functionName: params.functionName });
+      calls.push({ functionName: params.functionName, args: params.args });
       await new Promise((resolve) => setTimeout(resolve, 5));
       inFlight--;
       return "0xtxhash";
@@ -141,31 +155,43 @@ function makeService(opts: {
   events: AlertEvent[];
   proposeDecisionFn?: (input: unknown) => Promise<ProposeDecisionResult>;
   getMarketDataCallCount?: { count: number };
+  assets?: typeof ASSETS | typeof ASSETS_V2;
+  stableAssets?: string[];
+  poolFeeByAssetSymbol?: Record<string, number>;
+  vaultStateOverride?: VaultState;
+  marketDataOverride?: MarketData;
+  policyLimitsOverride?: PolicyLimits;
 }) {
+  const assets = opts.assets ?? ASSETS;
+  const stableAssets = opts.stableAssets ?? ["USDC"];
+  const fixedVaultState = opts.vaultStateOverride ?? vaultState();
+  const fixedMarketData = opts.marketDataOverride ?? marketData();
+  const fixedPolicyLimits = opts.policyLimitsOverride ?? policyLimits();
   return new KeeperService({
     publicClient: opts.publicClient as any,
     walletClient: opts.walletClient as any,
     vaultAddress: VAULT_ADDRESS,
-    assets: ASSETS,
-    stableAssets: ["USDC"],
+    assets,
+    stableAssets,
+    poolFeeByAssetSymbol: opts.poolFeeByAssetSymbol,
     strategyVersion: "v1",
     strategyConfigText: "test strategy",
     pipeline: opts.pipeline,
     keeperAccount: privateKeyToAccount(TEST_PRIVATE_KEY),
     alertSink: { send: (event) => opts.events.push(event) },
-    getVaultStateFn: async () => vaultState(),
-    buildPolicyLimitsStructFn: async () => policyLimits(),
+    getVaultStateFn: async () => fixedVaultState,
+    buildPolicyLimitsStructFn: async () => fixedPolicyLimits,
     getMarketDataFn: async () => {
       if (opts.getMarketDataCallCount) opts.getMarketDataCallCount.count++;
-      return marketData();
+      return fixedMarketData;
     },
     buildProposeDecisionInputFn: async () => ({
       vaultId: VAULT_ADDRESS,
       strategyVersion: "v1",
       strategyConfigText: "test strategy",
       policyLimitsText: "",
-      vaultState: vaultState(),
-      marketData: marketData(),
+      vaultState: fixedVaultState,
+      marketData: fixedMarketData,
     }),
     proposeDecisionFn: (opts.proposeDecisionFn as typeof import("../agent/core/loop.js").proposeDecision) ?? (async () => {
       throw new Error("proposeDecisionFn not provided for this test");
@@ -405,5 +431,212 @@ describe("KeeperService", () => {
     await service.runOnce();
 
     assert.ok(events.some((e) => e.code === "CONFIRMED_DECISION_STUCK" && e.severity === "warning"));
+  });
+
+  describe("real swap-leg construction", () => {
+    const usdcOnlyHolding = { asset: "USDC" as const, ledgerAmount: "10000", valueUSDC: "10000" };
+    const v2MarketData = (): MarketData => ({
+      prices: [
+        { asset: "USDC", priceUSDC: "1.00", referencePriceUSDC: "1.00", updatedAt: new Date().toISOString() },
+        { asset: "cirBTC", priceUSDC: "50000", referencePriceUSDC: "50000", updatedAt: new Date().toISOString() },
+      ],
+    });
+    const v2PolicyLimits = (): PolicyLimits =>
+      policyLimits({ maxAllocationBpsPerAsset: { USDC: 10_000, cirBTC: 2000 }, isStableAsset: { USDC: true, cirBTC: false }, minStableAllocationBps: 8000 });
+
+    it("ENTER: refuses to buy cirBTC (no independent reference price source), leaves the entry confirmed, never calls the chain", async () => {
+      const pipeline = new DecisionPipeline();
+      const vs = vaultState({ totalAssetsUSDC: "10000", holdings: [usdcOnlyHolding] });
+      const md = v2MarketData();
+      const entry = pipeline.enqueue(
+        decision({ action: "ENTER", asset: "cirBTC", amount: "0.001" }),
+        { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+        5,
+        md,
+      );
+      pipeline.confirm(entry.decisionId, "ops@team");
+
+      const { publicClient } = makeFakePublicClient({ assetDecimalsByAddress: ASSET_DECIMALS_V2, quoteAmountOut: 1_000_000n });
+      const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+      const events: AlertEvent[] = [];
+      const service = makeService({
+        pipeline,
+        publicClient,
+        walletClient,
+        events,
+        assets: ASSETS_V2,
+        stableAssets: ["USDC"],
+        poolFeeByAssetSymbol: { cirBTC: 3000 },
+        policyLimitsOverride: v2PolicyLimits(),
+        vaultStateOverride: vs,
+        marketDataOverride: md,
+      });
+
+      await service.runOnce();
+
+      // Security hard gate (executor/keeperService.ts's
+      // requireIndependentReferencePriceToBuy): buying cirBTC is refused
+      // before any real transaction is attempted, since its
+      // referencePriceUSDC is not independent from priceUSDC (see
+      // agent/core/tools/getMarketData.ts's hasIndependentReferencePrice).
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "confirmed");
+      assert.equal(walletCalls.length, 0);
+      assert.ok(events.some((e) => e.code === "EXECUTION_FAILED" && e.severity === "critical" && e.detail.includes("cirBTC")));
+    });
+
+    it("EXIT: sizes amountIn directly from decision.amount in the target asset's own units", async () => {
+      const pipeline = new DecisionPipeline();
+      const vs = vaultState({
+        totalAssetsUSDC: "10000",
+        holdings: [{ asset: "USDC", ledgerAmount: "8000", valueUSDC: "8000" }, { asset: "cirBTC", ledgerAmount: "0.04", valueUSDC: "2000" }],
+      });
+      const md = v2MarketData();
+      const entry = pipeline.enqueue(
+        decision({ action: "EXIT", asset: "cirBTC", amount: "0.0005" }),
+        { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+        5,
+        md,
+      );
+      pipeline.confirm(entry.decisionId, "ops@team");
+
+      const { publicClient } = makeFakePublicClient({ assetDecimalsByAddress: ASSET_DECIMALS_V2, quoteAmountOut: 25_000_000n });
+      const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+      const events: AlertEvent[] = [];
+      const service = makeService({
+        pipeline,
+        publicClient,
+        walletClient,
+        events,
+        assets: ASSETS_V2,
+        stableAssets: ["USDC"],
+        poolFeeByAssetSymbol: { cirBTC: 3000 },
+        policyLimitsOverride: v2PolicyLimits(),
+        vaultStateOverride: vs,
+        marketDataOverride: md,
+      });
+
+      await service.runOnce();
+
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "executed");
+      const swap = (walletCalls[0].args as unknown[])[2] as Array<Record<string, unknown>>;
+      assert.equal((swap[0].tokenIn as string).toLowerCase(), CIRBTC_ADDRESS.toLowerCase());
+      assert.equal((swap[0].tokenOut as string).toLowerCase(), USDC_ADDRESS.toLowerCase());
+      // 0.0005 cirBTC at 8 decimals.
+      assert.equal(swap[0].amountIn, 50_000n);
+      assert.equal(swap[0].minAmountOut, (25_000_000n * 9700n) / 10_000n);
+    });
+
+    it("REBALANCE: refuses to increase cirBTC's target allocation (no independent reference price source), leaves the entry confirmed", async () => {
+      const pipeline = new DecisionPipeline();
+      const vs = vaultState({ totalAssetsUSDC: "10000", holdings: [usdcOnlyHolding] });
+      const md = v2MarketData();
+      const entry = pipeline.enqueue(
+        decision({ action: "REBALANCE", targetAllocations: [{ asset: "USDC", targetWeightBps: 9000 }, { asset: "cirBTC", targetWeightBps: 1000 }] }),
+        { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+        5,
+        md,
+      );
+      pipeline.confirm(entry.decisionId, "ops@team");
+
+      const { publicClient } = makeFakePublicClient({ assetDecimalsByAddress: ASSET_DECIMALS_V2, quoteAmountOut: 20_000_000n });
+      const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+      const events: AlertEvent[] = [];
+      const service = makeService({
+        pipeline,
+        publicClient,
+        walletClient,
+        events,
+        assets: ASSETS_V2,
+        stableAssets: ["USDC"],
+        poolFeeByAssetSymbol: { cirBTC: 3000 },
+        policyLimitsOverride: v2PolicyLimits(),
+        vaultStateOverride: vs,
+        marketDataOverride: md,
+      });
+
+      await service.runOnce();
+
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "confirmed");
+      assert.equal(walletCalls.length, 0);
+      assert.ok(events.some((e) => e.code === "EXECUTION_FAILED" && e.severity === "critical" && e.detail.includes("cirBTC")));
+    });
+
+    it("REBALANCE: still allows decreasing cirBTC's target allocation (selling is never blocked), sizes amountIn correctly", async () => {
+      const pipeline = new DecisionPipeline();
+      const vs = vaultState({
+        totalAssetsUSDC: "10000",
+        holdings: [{ asset: "USDC", ledgerAmount: "8000", valueUSDC: "8000" }, { asset: "cirBTC", ledgerAmount: "0.04", valueUSDC: "2000" }],
+      });
+      const md = v2MarketData();
+      const entry = pipeline.enqueue(
+        decision({ action: "REBALANCE", targetAllocations: [{ asset: "USDC", targetWeightBps: 9000 }, { asset: "cirBTC", targetWeightBps: 1000 }] }),
+        { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+        5,
+        md,
+      );
+      pipeline.confirm(entry.decisionId, "ops@team");
+
+      const { publicClient } = makeFakePublicClient({ assetDecimalsByAddress: ASSET_DECIMALS_V2, quoteAmountOut: 20_000_000n });
+      const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+      const events: AlertEvent[] = [];
+      const service = makeService({
+        pipeline,
+        publicClient,
+        walletClient,
+        events,
+        assets: ASSETS_V2,
+        stableAssets: ["USDC"],
+        poolFeeByAssetSymbol: { cirBTC: 3000 },
+        policyLimitsOverride: v2PolicyLimits(),
+        vaultStateOverride: vs,
+        marketDataOverride: md,
+      });
+
+      await service.runOnce();
+
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "executed");
+      const swap = (walletCalls[0].args as unknown[])[2] as Array<Record<string, unknown>>;
+      assert.equal(swap.length, 1);
+      assert.equal((swap[0].tokenIn as string).toLowerCase(), CIRBTC_ADDRESS.toLowerCase());
+      assert.equal((swap[0].tokenOut as string).toLowerCase(), USDC_ADDRESS.toLowerCase());
+      // Current cirBTC value 2000 USDC, target 1000 USDC (10% of 10000):
+      // sell |1000 - 2000| / 50000 USDC-per-cirBTC = 0.02 cirBTC, at 8 decimals.
+      assert.equal(swap[0].amountIn, 2_000_000n);
+    });
+
+    it("REBALANCE produces no legs when every target already matches current allocation", async () => {
+      const pipeline = new DecisionPipeline();
+      const vs = vaultState({ totalAssetsUSDC: "10000", holdings: [usdcOnlyHolding] });
+      const md = v2MarketData();
+      const entry = pipeline.enqueue(
+        decision({ action: "REBALANCE", targetAllocations: [{ asset: "USDC", targetWeightBps: 10_000 }] }),
+        { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+        5,
+        md,
+      );
+      pipeline.confirm(entry.decisionId, "ops@team");
+
+      const { publicClient } = makeFakePublicClient({ assetDecimalsByAddress: ASSET_DECIMALS_V2 });
+      const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+      const events: AlertEvent[] = [];
+      const service = makeService({
+        pipeline,
+        publicClient,
+        walletClient,
+        events,
+        assets: ASSETS_V2,
+        stableAssets: ["USDC"],
+        poolFeeByAssetSymbol: { cirBTC: 3000 },
+        policyLimitsOverride: v2PolicyLimits(),
+        vaultStateOverride: vs,
+        marketDataOverride: md,
+      });
+
+      await service.runOnce();
+
+      assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "executed");
+      const swap = (walletCalls[0].args as unknown[])[2] as Array<Record<string, unknown>>;
+      assert.equal(swap.length, 0);
+    });
   });
 });
