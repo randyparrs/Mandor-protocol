@@ -32,7 +32,7 @@ function buildLineChartSvg(opts: {
 }): string {
   const width = opts.width ?? 900;
   const height = opts.height ?? 400;
-  const padding = { top: 55, right: 30, bottom: 40, left: 70 };
+  const padding = { top: 65, right: 30, bottom: 40, left: 70 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
@@ -54,7 +54,7 @@ function buildLineChartSvg(opts: {
   const legend = opts.series
     .map(
       (s, idx) =>
-        `<circle cx="${padding.left + idx * 180}" cy="${38}" r="5" fill="${s.color}" /><text x="${padding.left + idx * 180 + 12}" y="42" font-size="12" font-family="sans-serif" fill="#333">${s.label}</text>`,
+        `<circle cx="${padding.left + idx * 180}" cy="${46}" r="5" fill="${s.color}" /><text x="${padding.left + idx * 180 + 12}" y="50" font-size="12" font-family="sans-serif" fill="#333">${s.label}</text>`,
     )
     .join("\n  ");
 
@@ -66,9 +66,9 @@ function buildLineChartSvg(opts: {
   <text x="${padding.left - 8}" y="${(yy + 4).toFixed(1)}" font-size="10" text-anchor="end" font-family="sans-serif" fill="#666">${v.toFixed(0)}</text>`;
   }).join("\n  ");
 
-  return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
   <rect width="${width}" height="${height}" fill="#ffffff" />
-  <text x="${padding.left}" y="${padding.top - 15}" font-size="15" font-weight="bold" fill="#111">${opts.title}</text>
+  <text x="${padding.left}" y="20" font-size="15" font-weight="bold" fill="#111">${opts.title}</text>
   ${legend}
   ${gridAndLabels}
   ${paths}
