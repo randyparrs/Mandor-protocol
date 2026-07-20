@@ -4,6 +4,15 @@ An AI-native investment protocol on Arc Network. Users deposit capital into
 vaults; each vault is managed by an autonomous Claude agent that proposes
 investment decisions.
 
+> **Status note**: This protocol has gone through two iterations. **v1**
+> (USDC-only) and **v2** (USDC+cirBTC) were the first iteration --
+> HOLD/REBALANCE only, no real yield-generating mechanism -- and are now
+> **discontinued** (see [`legacy/`](legacy/)). **v3** (real Uniswap-V3-style
+> LP yield), **v4** (cross-chain lending via CCTP), and **v5** (ergodic
+> rebalancing) are the current, active product. See
+> [`docs/deployments.md`](docs/deployments.md) for the full deployment
+> history.
+
 ## The one rule everything else is built around
 
 **The AI agent is an advisor, never a custodian.** Claude never holds keys,

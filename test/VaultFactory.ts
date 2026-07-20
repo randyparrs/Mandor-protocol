@@ -1,11 +1,52 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { network } from "hardhat";
-import { getAddress, keccak256, toHex, parseUnits } from "viem";
+import hre, { network } from "hardhat";
+import { getAddress, keccak256, toHex, parseUnits, type Hex } from "viem";
 
 const ADMIN_ROLE = keccak256(toHex("ADMIN_ROLE"));
 
 const HOUR = 60 * 60;
+// Matches MandateVaultDeployer.sol's own MAX_FRAGMENT_SIZE exactly, see
+// scripts/deployVaultFactoryForV4.ts's identical constant.
+const MAX_FRAGMENT_SIZE = 24_000;
+
+interface LinkReferences {
+  [file: string]: { [lib: string]: Array<{ start: number; length: number }> };
+}
+
+/// @notice Exact copy of the helper already proven in
+/// scripts/deployVaultFactoryForV3.ts/V4.ts.
+function linkBytecode(bytecodeHex: string, linkReferences: LinkReferences, addresses: Record<string, `0x${string}`>): Hex {
+  let hex = bytecodeHex.startsWith("0x") ? bytecodeHex.slice(2) : bytecodeHex;
+  for (const [file, libs] of Object.entries(linkReferences)) {
+    for (const [libName, refs] of Object.entries(libs)) {
+      const key = `${file}:${libName}`;
+      const address = addresses[key];
+      if (!address) throw new Error(`linkBytecode: no address provided for ${key}, cannot link.`);
+      const addressHex = address.slice(2).toLowerCase();
+      for (const ref of refs) {
+        const startChar = ref.start * 2;
+        const lengthChar = ref.length * 2;
+        const before = hex.slice(0, startChar);
+        const after = hex.slice(startChar + lengthChar);
+        hex = before + addressHex + after;
+      }
+    }
+  }
+  return `0x${hex}` as Hex;
+}
+
+/// @notice Exact copy of the helper already proven live against Arc
+/// Testnet in scripts/verifyBytecodePointerDeployerOnArcTestnet.ts.
+function chunkBytecode(hex: Hex, maxChunkBytes: number): Hex[] {
+  const body = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const maxChunkChars = maxChunkBytes * 2;
+  const chunks: Hex[] = [];
+  for (let i = 0; i < body.length; i += maxChunkChars) {
+    chunks.push(`0x${body.slice(i, i + maxChunkChars)}` as Hex);
+  }
+  return chunks;
+}
 
 function policyLimits(overrides: Record<string, unknown> = {}) {
   return {
@@ -21,8 +62,46 @@ function policyLimits(overrides: Record<string, unknown> = {}) {
     assets: [] as `0x${string}`[],
     maxAllocationBps: [] as bigint[],
     stableAssets: [] as `0x${string}`[],
+    minLpTickRangeWidth: 0,
+    maxLpPositionValueLossBps: 0n,
+    maxLpOutOfRangeSeconds: 0n,
+    minLpPoolLiquidityRatioBps: 0n,
+    maxLpAllocationBps: 0n,
+    lendingReportStaleAfterSeconds: 0n,
+    lendingReportMaxDeviationBps: 0n,
+    lendingPositionForceUnwindSeconds: 0n,
+    maxLendingAllocationBps: 0n,
     ...overrides,
   };
+}
+
+// TickMath/LiquidityAmounts are real, deployed (not inlined) libraries as
+// of v3's LP logic, see foundry.toml's own doc comment on why. Fresh
+// library instances per call, cheap on a local Hardhat network, simpler
+// than threading shared addresses through every helper's return signature.
+//
+// MandateVaultDeployer.sol (post-fragmentation rewrite) no longer links
+// against these libraries directly: it takes MandateVault's own,
+// already-linked creation code as constructor-argument fragments instead
+// (see contracts/MandateVaultDeployer.sol's own doc comment), mirroring
+// exactly how scripts/deployVaultFactoryForV4.ts does it for the real
+// deployment. This helper does that whole sequence and returns the
+// deployed MandateVaultDeployer contract directly.
+async function deployVaultDeployer(viem: Awaited<ReturnType<typeof network.create>>["viem"]) {
+  const tickMath = await viem.deployContract("TickMath");
+  // getAmountsForLiquidityFromTwap calls TickMath.getSqrtRatioAtTick as a
+  // real external library call (TickMath's functions are public, not
+  // internal), so LiquidityAmounts itself needs TickMath linked at its own
+  // deploy time, not just at MandateVault's.
+  const liquidityAmounts = await viem.deployContract("LiquidityAmounts", [], {
+    libraries: { "project/contracts/lib/TickMath.sol:TickMath": tickMath.address },
+  });
+  const mandateVaultArtifact = await hre.artifacts.readArtifact("MandateVault");
+  const linkedMandateVaultCode = linkBytecode(mandateVaultArtifact.bytecode, mandateVaultArtifact.linkReferences as LinkReferences, {
+    "project/contracts/lib/LiquidityAmounts.sol:LiquidityAmounts": liquidityAmounts.address,
+  });
+  const fragments = chunkBytecode(linkedMandateVaultCode, MAX_FRAGMENT_SIZE);
+  return viem.deployContract("MandateVaultDeployer", [fragments]);
 }
 
 async function setup() {
@@ -36,7 +115,7 @@ async function setup() {
   const usdc = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 18]);
   const eurc = await viem.deployContract("MockERC20", ["Euro Coin", "EURC", 6]);
   const router = await viem.deployContract("MockSwapRouter");
-  const vaultDeployer = await viem.deployContract("MandateVaultDeployer");
+  const vaultDeployer = await deployVaultDeployer(viem);
   const capitalLimitRegistry = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("10000", 18)]);
 
   const factory = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer.address, capitalLimitRegistry.address]);
@@ -57,6 +136,9 @@ function createParams(over: Record<string, unknown> = {}) {
     otherAssets: [] as `0x${string}`[],
     limits: policyLimits(),
     seedAmount: parseUnits("100", 18),
+    // v4 only, address(0) here (no cross-chain lending capability wired
+    // for this v1/v2-shaped fixture).
+    cctpTokenMessenger: "0x0000000000000000000000000000000000000000" as `0x${string}`,
     ...over,
   };
 }
@@ -64,7 +146,7 @@ function createParams(over: Record<string, unknown> = {}) {
 describe("MandateVaultDeployer", () => {
   it("deploy reverts for any caller other than the real, wired VaultFactory", async () => {
     const { viem, roles, usdc, router, other } = await setup();
-    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    const freshDeployer = await deployVaultDeployer(viem);
     // deliberately never call setFactory, so factory() is still address(0);
     // confirm a direct call from an arbitrary address reverts. Note deploy
     // no longer takes a `factory` parameter at all (the earlier, broken
@@ -91,7 +173,7 @@ describe("MandateVaultDeployer", () => {
 
   it("setFactory can only be called once, only by whoever deployed the deployer", async () => {
     const { viem, other } = await setup();
-    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    const freshDeployer = await deployVaultDeployer(viem);
     await assert.rejects(freshDeployer.write.setFactory([other.account.address], { account: other.account }));
 
     await freshDeployer.write.setFactory([other.account.address]);
@@ -157,7 +239,7 @@ describe("VaultFactory", () => {
     // Fresh deployer, so this factory (not the one from setup()) is the
     // one actually wired to call it, and the revert we're testing for
     // (insufficient allowance) is the real cause, not a mismatched deployer.
-    const vaultDeployer2 = await viem.deployContract("MandateVaultDeployer");
+    const vaultDeployer2 = await deployVaultDeployer(viem);
     const capitalLimitRegistry2 = await viem.deployContract("CapitalLimitRegistry", [roles.address, parseUnits("10000", 18)]);
     const factory2 = await viem.deployContract("VaultFactory", [roles.address, treasury.account.address, vaultDeployer2.address, capitalLimitRegistry2.address]);
     await vaultDeployer2.write.setFactory([factory2.address]);
@@ -198,7 +280,7 @@ describe("VaultFactory", () => {
 
   it("createVault reverts if capitalLimitRegistry is unset", async () => {
     const { viem, roles, treasury, usdc, router, admin } = await setup();
-    const freshDeployer = await viem.deployContract("MandateVaultDeployer");
+    const freshDeployer = await deployVaultDeployer(viem);
     const factoryWithoutRegistry = await viem.deployContract("VaultFactory", [
       roles.address,
       treasury.account.address,

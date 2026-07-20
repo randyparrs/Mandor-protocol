@@ -23,6 +23,8 @@ const vaultState: VaultState = {
   tradesToday: 0,
   highWaterMarkUSDC: "10200.00",
   currentDrawdownBps: 196,
+  lpPositions: [],
+  currentLendingPositions: [],
 };
 
 const marketData: MarketData = {

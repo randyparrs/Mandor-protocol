@@ -127,11 +127,48 @@ contract MandateVaultHandler is Test {
                 action: IVaultPolicy.DecisionAction.REBALANCE,
                 asset: address(0),
                 amount: 0,
-                targetAllocations: targets
+                targetAllocations: targets,
+                lpPool: address(0),
+                tickLower: 0,
+                tickUpper: 0,
+                amount0Desired: 0,
+                amount1Desired: 0,
+                amount0Min: 0,
+                amount1Min: 0,
+                lpTokenId: 0,
+                liquidityToRemove: 0,
+                chainId: 0,
+                lendingPositionId: 0
             }),
             prices,
-            swaps
+            swaps,
+            _emptyLpLeg(),
+            _emptyBridgeLeg()
         ) returns (bool) {} catch {}
+    }
+
+    /// @dev pool == address(0) means "no LP action this call," same
+    /// convention MandateVault.executeDecision itself uses.
+    function _emptyLpLeg() internal pure returns (MandateVault.LpLeg memory) {
+        return MandateVault.LpLeg({
+            pool: address(0),
+            fee: 0,
+            tickLower: 0,
+            tickUpper: 0,
+            amount0Desired: 0,
+            amount1Desired: 0,
+            amount0Min: 0,
+            amount1Min: 0,
+            tokenId: 0,
+            liquidity: 0,
+            deadline: 0
+        });
+    }
+
+    /// @dev chainId == 0 && positionId == 0 means "no bridge action this
+    /// call," same convention MandateVault.executeDecision itself uses.
+    function _emptyBridgeLeg() internal pure returns (MandateVault.BridgeLeg memory) {
+        return MandateVault.BridgeLeg({chainId: 0, amount: 0, positionId: 0, cctpDestinationDomain: 0, maxFee: 0});
     }
 
     /// @dev sweepDust is now a propose/execute pair behind a 48h timelock
@@ -147,7 +184,7 @@ contract MandateVaultHandler is Test {
 
     function _proposeAndExecuteSweep(address asset_, address to) internal {
         try vault.proposeSweepDust(asset_, to) {
-            vm.warp(block.timestamp + vault.SWEEP_DUST_TIMELOCK() + 1);
+            vm.warp(block.timestamp + 48 hours + 1); // matches MandateVault.sol's SWEEP_DUST_TIMELOCK
             try vault.executeSweepDust(asset_) {} catch {}
         } catch {}
     }
@@ -200,7 +237,7 @@ contract MandateVaultInvariantTest is Test {
 
         address[] memory otherAssets = new address[](1);
         otherAssets[0] = address(eurc);
-        vault = new MandateVault(IERC20(address(usdc)), address(roles), address(router), "Mandate USDC Vault", "mUSDC", otherAssets, address(this));
+        vault = new MandateVault(IERC20(address(usdc)), address(roles), address(router), "Mandate USDC Vault", "mUSDC", otherAssets, address(this), address(0));
 
         address[] memory assets = new address[](2);
         assets[0] = address(usdc);
@@ -224,7 +261,16 @@ contract MandateVaultInvariantTest is Test {
                 drawdownSpeedWindowSeconds: 3600,
                 assets: assets,
                 maxAllocationBps: maxBps,
-                stableAssets: stableAssets
+                stableAssets: stableAssets,
+                minLpTickRangeWidth: 0,
+                maxLpPositionValueLossBps: 0,
+                maxLpOutOfRangeSeconds: 0,
+                minLpPoolLiquidityRatioBps: 0,
+                maxLpAllocationBps: 0,
+                lendingReportStaleAfterSeconds: 0,
+                lendingReportMaxDeviationBps: 0,
+                lendingPositionForceUnwindSeconds: 0,
+                maxLendingAllocationBps: 0
             })
         );
         vault.setPolicy(address(policy));

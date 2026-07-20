@@ -28,6 +28,7 @@ const ASSETS_V2 = [
   { symbol: "cirBTC" as const, address: CIRBTC_ADDRESS },
 ];
 const ASSET_DECIMALS_V2: Record<string, number> = { [USDC_ADDRESS.toLowerCase()]: 6, [CIRBTC_ADDRESS.toLowerCase()]: 8 };
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 function decision(overrides: Partial<VaultDecision> = {}): VaultDecision {
   return {
@@ -51,6 +52,8 @@ function vaultState(overrides: Partial<VaultState> = {}): VaultState {
     tradesToday: 0,
     highWaterMarkUSDC: "5",
     currentDrawdownBps: 0,
+    lpPositions: [],
+    currentLendingPositions: [],
     ...overrides,
   };
 }
@@ -67,6 +70,15 @@ function policyLimits(overrides: Partial<PolicyLimits> = {}): PolicyLimits {
     maxDrawdownSpeedBpsPerWindow: 300,
     drawdownSpeedWindowSeconds: 3600,
     autoPauseBountyAmount: "0",
+    minLpTickRangeWidth: 0,
+    maxLpPositionValueLossBps: 0,
+    maxLpOutOfRangeSeconds: 0,
+    minLpPoolLiquidityRatioBps: 0,
+    maxLpAllocationBps: 0,
+    lendingReportStaleAfterSeconds: 0,
+    lendingReportMaxDeviationBps: 0,
+    lendingPositionForceUnwindSeconds: 0,
+    maxLendingAllocationBps: 0,
     ...overrides,
   };
 }
@@ -93,6 +105,11 @@ function makeFakePublicClient(opts: {
   receiptStatus?: "success" | "reverted";
   assetDecimalsByAddress?: Record<string, number>;
   quoteAmountOut?: bigint;
+  positionManagerAddress?: string;
+  // tokenId (string) -> the real INonfungiblePositionManager.positions()
+  // tuple, only needed by tests exercising an open LP position (e.g.
+  // EMERGENCY_EXIT_TO_STABLE closing one), see closeAllOpenLpPositions.
+  positionsByTokenId?: Record<string, readonly [bigint, string, string, string, number, number, number, bigint, bigint, bigint, bigint, bigint]>;
 } = {}) {
   const calls: FakeCall[] = [];
   const totalAssetsSequence = opts.totalAssetsSequence ?? [5_000_000n, 5_000_000n];
@@ -113,6 +130,16 @@ function makeFakePublicClient(opts: {
       }
       if (params.functionName === "quoteExactInputSingle") {
         return opts.quoteAmountOut ?? 0n;
+      }
+      if (params.functionName === "positionManager") {
+        if (!opts.positionManagerAddress) throw new Error("fake readContract: positionManagerAddress not configured for this test");
+        return opts.positionManagerAddress;
+      }
+      if (params.functionName === "positions") {
+        const tokenId = (params.args?.[0] as bigint | undefined)?.toString();
+        const position = tokenId && opts.positionsByTokenId?.[tokenId];
+        if (!position) throw new Error(`fake readContract: no fixture position for tokenId ${tokenId}`);
+        return position;
       }
       throw new Error(`fake readContract: unexpected functionName ${params.functionName}`);
     },
@@ -368,6 +395,97 @@ describe("KeeperService", () => {
     assert.ok(events.some((e) => e.code === "SELF_CONSISTENCY_DISAGREEMENT" && e.severity === "critical"));
   });
 
+  it("EMERGENCY_EXIT_TO_STABLE closes an open LP position first, then sweeps ledger holdings to stable, as two separate transactions", async () => {
+    // Regression test for a real bug found 2026-07-14: EMERGENCY_EXIT_TO_STABLE
+    // used to only ever sweep simple ledger holdings, silently leaving any
+    // open LP position untouched (still exposed to the pool's own
+    // manipulable slot0() price). See executor/keeperService.ts's
+    // closeAllOpenLpPositions and contracts/MandateVault.sol's
+    // _executeLpLeg (now treats EMERGENCY_EXIT_TO_STABLE + a populated leg
+    // as an implicit close).
+    const POSITION_MANAGER_ADDRESS = "0x0553682bc188b850acd31CBd3500Dcd0aa35372B";
+    const pipeline = new DecisionPipeline();
+    const vs = vaultState({
+      totalAssetsUSDC: "10000",
+      holdings: [{ asset: "USDC", ledgerAmount: "8000", valueUSDC: "8000" }, { asset: "cirBTC", ledgerAmount: "0.04", valueUSDC: "2000" }],
+      lpPositions: [
+        {
+          tokenId: "42",
+          pool: "0x254bA0424618113127538eE11e42C1e3c1721225",
+          valueUSDC: "0",
+          openValueUSDC: "0",
+          inRange: true,
+          outOfRangeSince: null,
+          poolLiquidityAtOpen: "0",
+          currentPoolLiquidity: "0",
+        },
+      ],
+    });
+    const md: MarketData = {
+      prices: [
+        { asset: "USDC", priceUSDC: "1.00", referencePriceUSDC: "1.00", updatedAt: new Date().toISOString() },
+        { asset: "cirBTC", priceUSDC: "50000", referencePriceUSDC: "50000", updatedAt: new Date().toISOString() },
+      ],
+    };
+    const entry = pipeline.enqueue(
+      decision({ action: "EMERGENCY_EXIT_TO_STABLE" }),
+      { passed: true, violations: [], checkedAt: new Date().toISOString(), source: "offchain-precheck" },
+      5,
+      md,
+    );
+    pipeline.confirm(entry.decisionId, "ops@team");
+
+    const { publicClient } = makeFakePublicClient({
+      assetDecimalsByAddress: ASSET_DECIMALS_V2,
+      quoteAmountOut: 25_000_000n,
+      positionManagerAddress: POSITION_MANAGER_ADDRESS,
+      positionsByTokenId: {
+        "42": [0n, ZERO_ADDRESS, USDC_ADDRESS, CIRBTC_ADDRESS, 3000, -1200, 1200, 1_000_000n, 0n, 0n, 0n, 0n],
+      },
+    });
+    const { walletClient, calls: walletCalls } = makeFakeWalletClient();
+    const events: AlertEvent[] = [];
+    const service = makeService({
+      pipeline,
+      publicClient,
+      walletClient,
+      events,
+      assets: ASSETS_V2,
+      stableAssets: ["USDC"],
+      poolFeeByAssetSymbol: { cirBTC: 3000 },
+      vaultStateOverride: vs,
+      marketDataOverride: md,
+      // EMERGENCY_EXIT_TO_STABLE's own self-consistency gate (point 7)
+      // samples 3 fresh proposals before ever executing; all 3 must agree.
+      proposeDecisionFn: async () => ({
+        decision: decision({ action: "EMERGENCY_EXIT_TO_STABLE" }),
+        promptHash: "hash",
+        thinkingText: null,
+        thinkingTokens: null,
+        rawOutput: {} as never,
+      }),
+    });
+
+    await service.runOnce();
+
+    // Two separate onchain calls: the LP close, then the ledger sweep.
+    assert.equal(walletCalls.length, 2);
+
+    const [closeCall, sweepCall] = walletCalls;
+    const closeSwaps = closeCall.args?.[2] as unknown[];
+    const closeLpLeg = closeCall.args?.[3] as { pool: string; tokenId: bigint };
+    assert.equal(closeSwaps.length, 0, "the LP-close call must never also carry a ledger sweep, that happens in the second call");
+    assert.equal(closeLpLeg.tokenId, 42n);
+
+    const sweepSwaps = sweepCall.args?.[2] as unknown[];
+    const sweepLpLeg = sweepCall.args?.[3] as { pool: string; tokenId: bigint };
+    assert.equal(sweepLpLeg.pool, ZERO_ADDRESS, "the sweep call carries no LP leg, the position was already closed by the first call");
+    assert.equal(sweepSwaps.length, 1, "the sweep call must still convert the simple cirBTC ledger holding to stable");
+
+    assert.ok(events.some((e) => e.code === "EMERGENCY_EXIT_LP_POSITIONS_CLOSED" && e.detail.includes("closed 1 open LP position")));
+    assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "executed");
+  });
+
   it("reuses the stored price when still within oracleMaxStalenessSeconds, never calls getMarketData again", async () => {
     const pipeline = new DecisionPipeline();
     const freshPrice = marketData(new Date().toISOString());
@@ -444,7 +562,7 @@ describe("KeeperService", () => {
     const v2PolicyLimits = (): PolicyLimits =>
       policyLimits({ maxAllocationBpsPerAsset: { USDC: 10_000, cirBTC: 2000 }, isStableAsset: { USDC: true, cirBTC: false }, minStableAllocationBps: 8000 });
 
-    it("ENTER: refuses to buy cirBTC (no independent reference price source), leaves the entry confirmed, never calls the chain", async () => {
+    it("ENTER: refuses to buy cirBTC (no independent reference price source), leaves the entry confirmed, never calls the chain -- now caught at the offchain pre-check, before ever reaching the keeper's own hard block", async () => {
       const pipeline = new DecisionPipeline();
       const vs = vaultState({ totalAssetsUSDC: "10000", holdings: [usdcOnlyHolding] });
       const md = v2MarketData();
@@ -479,9 +597,15 @@ describe("KeeperService", () => {
       // before any real transaction is attempted, since its
       // referencePriceUSDC is not independent from priceUSDC (see
       // agent/core/tools/getMarketData.ts's hasIndependentReferencePrice).
+      // Real behavior change (an improvement, not a regression): this is
+      // now caught earlier, by agent/policy/offchainPolicyCheck.ts's own
+      // INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY check, so the keeper's
+      // own hard block (still present, still correct as a defense-in-depth
+      // backstop) is never even reached.
       assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "confirmed");
       assert.equal(walletCalls.length, 0);
-      assert.ok(events.some((e) => e.code === "EXECUTION_FAILED" && e.severity === "critical" && e.detail.includes("cirBTC")));
+      assert.ok(events.some((e) => e.code === "EXECUTION_ABORTED_PRECHECK" && e.severity === "warning" && e.detail.includes("INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY")));
+      assert.ok(!events.some((e) => e.code === "EXECUTION_FAILED"));
     });
 
     it("EXIT: sizes amountIn directly from decision.amount in the target asset's own units", async () => {
@@ -526,7 +650,7 @@ describe("KeeperService", () => {
       assert.equal(swap[0].minAmountOut, (25_000_000n * 9700n) / 10_000n);
     });
 
-    it("REBALANCE: refuses to increase cirBTC's target allocation (no independent reference price source), leaves the entry confirmed", async () => {
+    it("REBALANCE: refuses to increase cirBTC's target allocation (no independent reference price source), leaves the entry confirmed -- now caught at the offchain pre-check, before ever reaching the keeper's own hard block", async () => {
       const pipeline = new DecisionPipeline();
       const vs = vaultState({ totalAssetsUSDC: "10000", holdings: [usdcOnlyHolding] });
       const md = v2MarketData();
@@ -558,7 +682,16 @@ describe("KeeperService", () => {
 
       assert.equal(pipeline.getEntry(entry.decisionId)!.queued.status, "confirmed");
       assert.equal(walletCalls.length, 0);
-      assert.ok(events.some((e) => e.code === "EXECUTION_FAILED" && e.severity === "critical" && e.detail.includes("cirBTC")));
+      // Real behavior change (an improvement, not a regression): this exact
+      // scenario is now caught earlier, by
+      // agent/policy/offchainPolicyCheck.ts's own INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY
+      // check, at the "fresh pre-check re-verification" step inside
+      // processEntry -- so the keeper's own requireIndependentReferencePriceToBuy
+      // (still present, still correct as a defense-in-depth backstop) is
+      // never even reached, and the alert is now a warning-level
+      // EXECUTION_ABORTED_PRECHECK, not a critical-level EXECUTION_FAILED.
+      assert.ok(events.some((e) => e.code === "EXECUTION_ABORTED_PRECHECK" && e.severity === "warning" && e.detail.includes("INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY")));
+      assert.ok(!events.some((e) => e.code === "EXECUTION_FAILED"));
     });
 
     it("REBALANCE: still allows decreasing cirBTC's target allocation (selling is never blocked), sizes amountIn correctly", async () => {

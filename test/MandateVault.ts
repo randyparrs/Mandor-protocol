@@ -26,7 +26,44 @@ function policyLimits(overrides: Record<string, unknown> = {}) {
     assets: [] as `0x${string}`[],
     maxAllocationBps: [] as bigint[],
     stableAssets: [] as `0x${string}`[],
+    minLpTickRangeWidth: 0,
+    maxLpPositionValueLossBps: 0n,
+    maxLpOutOfRangeSeconds: 0n,
+    minLpPoolLiquidityRatioBps: 0n,
+    maxLpAllocationBps: 0n,
+    lendingReportStaleAfterSeconds: 0n,
+    lendingReportMaxDeviationBps: 0n,
+    lendingPositionForceUnwindSeconds: 0n,
+    maxLendingAllocationBps: 0n,
     ...overrides,
+  };
+}
+
+// TickMath/LiquidityAmounts are real, deployed (not inlined) libraries as
+// of v3's LP logic, see foundry.toml's own doc comment on why: any
+// contract using them (MandateVault included) needs their addresses
+// linked at deploy time. Fresh library instances per call, cheap on a
+// local Hardhat network, simpler than threading shared addresses through
+// every helper's return signature.
+//
+// Only LiquidityAmounts is returned for linking into MandateVault itself:
+// MandateVault's own real linkReferences (confirmed via
+// hre.artifacts.readArtifact) reference LiquidityAmounts directly, never
+// TickMath (TickMath is only an internal dependency of LiquidityAmounts'
+// own bytecode, linked below when LiquidityAmounts itself is deployed).
+// Passing TickMath's address as an extraneous library to MandateVault's
+// own deploy is rejected by Hardhat 3's linker (UnnecessaryLibraryError).
+async function deployLpLibraries(viem: Awaited<ReturnType<typeof network.create>>["viem"]) {
+  const tickMath = await viem.deployContract("TickMath");
+  // getAmountsForLiquidityFromTwap calls TickMath.getSqrtRatioAtTick as a
+  // real external library call (TickMath's functions are public, not
+  // internal), so LiquidityAmounts itself needs TickMath linked at its own
+  // deploy time, not just at MandateVaultDeployer's.
+  const liquidityAmounts = await viem.deployContract("LiquidityAmounts", [], {
+    libraries: { "project/contracts/lib/TickMath.sol:TickMath": tickMath.address },
+  });
+  return {
+    "project/contracts/lib/LiquidityAmounts.sol:LiquidityAmounts": liquidityAmounts.address,
   };
 }
 
@@ -44,15 +81,23 @@ async function setup() {
   const eurc = await viem.deployContract("MockERC20", ["Euro Coin", "EURC", 6]);
   const router = await viem.deployContract("MockSwapRouter");
 
-  const vault = await viem.deployContract("MandateVault", [
-    usdc.address,
-    roles.address,
-    router.address,
-    "Mandate USDC Vault",
-    "mUSDC",
-    [eurc.address],
-    admin.account.address,
-  ]);
+  const libraries = await deployLpLibraries(viem);
+  const vault = await viem.deployContract(
+    "MandateVault",
+    [
+      usdc.address,
+      roles.address,
+      router.address,
+      "Mandate USDC Vault",
+      "mUSDC",
+      [eurc.address],
+      admin.account.address,
+      // v4 only, address(0) here (no cross-chain lending capability wired
+      // for this v1/v2-shaped fixture).
+      "0x0000000000000000000000000000000000000000",
+    ],
+    { libraries },
+  );
 
   const limits = policyLimits({
     vault: vault.address,
@@ -78,9 +123,49 @@ function decision(action: number, overrides: Record<string, unknown> = {}) {
     asset: "0x0000000000000000000000000000000000000000",
     amount: 0n,
     targetAllocations: [],
+    lpPool: "0x0000000000000000000000000000000000000000",
+    tickLower: 0,
+    tickUpper: 0,
+    amount0Desired: 0n,
+    amount1Desired: 0n,
+    amount0Min: 0n,
+    amount1Min: 0n,
+    lpTokenId: 0n,
+    liquidityToRemove: 0n,
+    // v4 only, zero here (no cross-chain lending action for this
+    // v1/v2-shaped fixture).
+    chainId: 0n,
+    lendingPositionId: 0n,
     ...overrides,
   };
 }
+
+// pool == ZERO_ADDRESS means "no LP action this call," the exact
+// convention MandateVault.sol's executeDecision itself uses.
+const EMPTY_LP_LEG = {
+  pool: "0x0000000000000000000000000000000000000000",
+  fee: 0,
+  tickLower: 0,
+  tickUpper: 0,
+  amount0Desired: 0n,
+  amount1Desired: 0n,
+  amount0Min: 0n,
+  amount1Min: 0n,
+  tokenId: 0n,
+  liquidity: 0n,
+  deadline: 0n,
+};
+
+// chainId == 0 && positionId == 0 means "no bridge action this call," the
+// exact convention MandateVault.sol's executeDecision itself uses (see
+// its own bridgeLeg.chainId != 0 || bridgeLeg.positionId != 0 check).
+const EMPTY_BRIDGE_LEG = {
+  chainId: 0n,
+  amount: 0n,
+  positionId: 0n,
+  cctpDestinationDomain: 0,
+  maxFee: 0n,
+};
 
 describe("MandateVault", () => {
   it("deploys with the correct asset and starts at zero totalAssets", async () => {
@@ -151,13 +236,13 @@ describe("MandateVault", () => {
   it("executeDecision reverts with DecisionRejected when the vault is paused", async () => {
     const { vault, policy, pauser, keeper } = await setup();
     await policy.write.pause({ account: pauser.account });
-    await assert.rejects(vault.write.executeDecision([decision(HOLD), [], []], { account: keeper.account }));
+    await assert.rejects(vault.write.executeDecision([decision(HOLD), [], [], EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], { account: keeper.account }));
   });
 
   it("EMERGENCY_EXIT_TO_STABLE succeeds via executeDecision even while paused", async () => {
     const { vault, policy, pauser, keeper } = await setup();
     await policy.write.pause({ account: pauser.account });
-    await vault.write.executeDecision([decision(EMERGENCY_EXIT_TO_STABLE), [], []], { account: keeper.account });
+    await vault.write.executeDecision([decision(EMERGENCY_EXIT_TO_STABLE), [], [], EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], { account: keeper.account });
   });
 
   it("tradesToday increments on non-HOLD actions and HOLD never increments it", async () => {
@@ -167,10 +252,10 @@ describe("MandateVault", () => {
     // against instead of an empty, all-zero-bps vault.
     await vault.write.deposit([parseUnits("1000", 18), user1.account.address], { account: user1.account });
 
-    await vault.write.executeDecision([decision(HOLD), [], []], { account: keeper.account });
+    await vault.write.executeDecision([decision(HOLD), [], [], EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], { account: keeper.account });
     assert.equal(await vault.read.tradesToday(), 0n);
 
-    await vault.write.executeDecision([decision(REBALANCE), [], []], { account: keeper.account });
+    await vault.write.executeDecision([decision(REBALANCE), [], [], EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], { account: keeper.account });
     assert.equal(await vault.read.tradesToday(), 1n);
   });
 
@@ -201,7 +286,7 @@ describe("MandateVault", () => {
       },
     ];
 
-    await vault.write.executeDecision([decision(REBALANCE, { targetAllocations }), prices, swaps], {
+    await vault.write.executeDecision([decision(REBALANCE, { targetAllocations }), prices, swaps, EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], {
       account: keeper.account,
     });
 
@@ -238,7 +323,7 @@ describe("MandateVault", () => {
     ];
 
     await assert.rejects(
-      vault.write.executeDecision([decision(REBALANCE, { targetAllocations }), prices, swaps], {
+      vault.write.executeDecision([decision(REBALANCE, { targetAllocations }), prices, swaps, EMPTY_LP_LEG, EMPTY_BRIDGE_LEG], {
         account: keeper.account,
       }),
     );
@@ -272,15 +357,21 @@ describe("MandateVault", () => {
     const usdc = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 18]);
     const eurc = await viem.deployContract("MockERC20", ["Euro Coin", "EURC", 6]);
     const router = await viem.deployContract("MockSwapRouter");
-    const vault = await viem.deployContract("MandateVault", [
-      usdc.address,
-      roles.address,
-      router.address,
-      "Mandate USDC Vault",
-      "mUSDC",
-      [eurc.address],
-      admin.account.address,
-    ]);
+    const libraries = await deployLpLibraries(viem);
+    const vault = await viem.deployContract(
+      "MandateVault",
+      [
+        usdc.address,
+        roles.address,
+        router.address,
+        "Mandate USDC Vault",
+        "mUSDC",
+        [eurc.address],
+        admin.account.address,
+        "0x0000000000000000000000000000000000000000",
+      ],
+      { libraries },
+    );
     const limits = policyLimits({
       vault: vault.address,
       roles: roles.address,
@@ -303,6 +394,8 @@ describe("MandateVault", () => {
       tradesToday: 0n,
       currentHoldings: [],
       prices: [],
+      currentLpPositions: [],
+      currentLendingPositions: [],
     };
     await policy.write.checkAndAutoPause([state], { account: other.account });
 
@@ -319,7 +412,7 @@ describe("MandateVault", () => {
     await vault.write.proposeSweepDust([usdc.address, governance.account.address], { account: governance.account });
     await assert.rejects(vault.write.executeSweepDust([usdc.address], { account: other.account }));
 
-    const timelock = await vault.read.SWEEP_DUST_TIMELOCK();
+    const timelock = 48n * 3600n; // matches MandateVault.sol's SWEEP_DUST_TIMELOCK
     const ts = (await pub.getBlock()).timestamp;
     await pub.request({ method: "evm_setNextBlockTimestamp" as any, params: [`0x${(ts + timelock + 1n).toString(16)}`] as any });
     await vault.write.executeSweepDust([usdc.address], { account: other.account });

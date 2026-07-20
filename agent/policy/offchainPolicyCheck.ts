@@ -14,9 +14,17 @@ import type { PolicyCheckResult, PolicyLimits, PolicyViolation, PolicyViolationC
 import type { KnownAsset } from "../core/tools/getVaultState.js";
 import type { MarketData, VaultState } from "../core/types.js";
 import { parseRawAmount, INTERNAL_FIXED_POINT_DECIMALS } from "../../shared/money.js";
+import { hasIndependentReferencePrice } from "../core/tools/getMarketData.js";
 
 const BPS_DENOMINATOR = 10_000n;
 const FIXED_POINT_DECIMALS = INTERNAL_FIXED_POINT_DECIMALS;
+
+// Far above any real cap this project configures today (highest is
+// scripts/paperVaultConfig.ts's 4500bps), yet far below the magnitude a
+// real unit-mismatch bug already produced (1,385,721,371bps). See the
+// IMPLAUSIBLE_ALLOCATION_MAGNITUDE check below for why this exists
+// alongside, not instead of, MAX_ALLOCATION_EXCEEDED.
+const IMPLAUSIBLE_ALLOCATION_BPS_THRESHOLD = 50_000;
 
 export interface OffchainPolicyCheckParams {
   decision: VaultDecision;
@@ -29,6 +37,21 @@ export interface OffchainPolicyCheckParams {
   /// "Projection model" below.
   assets: KnownAsset[];
   now?: Date; // injectable for tests, defaults to real time
+  /// @notice Opt-in, defaults to false/undefined (v1-v4's real, unchanged
+  /// behavior). NOT a PolicyLimits field: PolicyLimits exists specifically
+  /// to mirror REAL, chain-readable VaultPolicy immutables, and whether a
+  /// given vault's REBALANCE is exempt from MAX_DRAWDOWN_EXCEEDED is not
+  /// readable from chain at all (contracts/VaultPolicy.sol's own exemption
+  /// is a hardcoded logic branch baked into whichever bytecode a vault was
+  /// deployed with, not a stored value with a getter). Since this module is
+  /// shared LIVE across every vault version (unlike VaultPolicy.sol, where
+  /// each version's bytecode is independently frozen at its own deploy
+  /// time), a caller must say so explicitly per vault -- passing this as
+  /// `true` for v5 and leaving it unset for v1-v4 is what keeps this
+  /// offchain pre-check from silently drifting ahead of v1-v4's real,
+  /// already-deployed onchain gate (which still enforces the OLD,
+  /// unconditional check unconditionally, exactly as deployed).
+  rebalanceExemptFromMaxDrawdown?: boolean;
 }
 
 function violation(code: PolicyViolationCode, detail: string): PolicyViolation {
@@ -60,7 +83,7 @@ function resolvePriceUSDC(asset: AssetSymbol, assets: KnownAsset[], marketData: 
   return parseRawAmount(priced.priceUSDC, FIXED_POINT_DECIMALS);
 }
 
-interface ProjectedHolding {
+export interface ProjectedHolding {
   asset: AssetSymbol;
   valueUSDC: bigint;
 }
@@ -83,7 +106,12 @@ interface ProjectedHolding {
 ///   multiple non-base holdings funding an ENTER from more than one asset at
 ///   once is not modeled; today's live vault is USDC-only (see
 ///   docs/deployments.md), so this gap has no live consequence yet.
-function projectHoldings(
+/// @notice Exported (only reason this isn't still module-private): reused
+/// by scripts/paperVaultCycle.ts to advance the Paper Vault's own
+/// simulated holdings after a decision that passes the pre-check, so that
+/// state's evolution logic is never duplicated. This function's own
+/// behavior/contract is unchanged, only its visibility.
+export function projectHoldings(
   decision: VaultDecision,
   vaultState: VaultState,
   assets: KnownAsset[],
@@ -166,7 +194,7 @@ function projectHoldings(
 /// shape that contract expects. See this module's own file-level comment
 /// for why it is a pure function and never authoritative.
 export function checkPolicyOffchain(params: OffchainPolicyCheckParams): PolicyCheckResult {
-  const { decision, vaultState, policyLimits, marketData, assets } = params;
+  const { decision, vaultState, policyLimits, marketData, assets, rebalanceExemptFromMaxDrawdown } = params;
   const checkedAt = (params.now ?? new Date()).toISOString();
 
   if (decision.action === "EMERGENCY_EXIT_TO_STABLE") {
@@ -217,7 +245,39 @@ export function checkPolicyOffchain(params: OffchainPolicyCheckParams): PolicyCh
     }
   }
 
-  const { holdings: projectedHoldings, totalUSDC: projectedTotalUSDC } = projectHoldings(decision, vaultState, assets, marketData);
+  // LP_*/BRIDGE_* actions are not modeled by projectHoldings (it assumes a
+  // simple swap into/out of a registered fungible asset, not a position
+  // bucket whose composition depends on a chosen tick range or a
+  // cross-chain lending position). Rather than force an under-tested
+  // projection model into this advisory-only pre-check, the current
+  // (unprojected) holdings are used for the allocation/stable-bps checks
+  // below for these actions, same "not modeled, no live consequence yet"
+  // honesty already applied to ENTER/EXIT's own multi-asset-funding gap
+  // (see projectHoldings's own doc comment). The LP-position-health and
+  // lending-position-health loops further below run regardless of action,
+  // mirroring VaultPolicy.sol's own unconditional currentLpPositions/
+  // currentLendingPositions loops.
+  const isLpAction = decision.action === "LP_OPEN" || decision.action === "LP_INCREASE" || decision.action === "LP_DECREASE" || decision.action === "LP_COLLECT" || decision.action === "LP_CLOSE";
+  const isBridgeAction = decision.action === "BRIDGE_DEPOSIT" || decision.action === "BRIDGE_WITHDRAW";
+  const { holdings: projectedHoldings, totalUSDC: projectedTotalUSDC } =
+    isLpAction || isBridgeAction
+      ? { holdings: vaultState.holdings.map((h) => ({ asset: h.asset, valueUSDC: parseRawAmount(h.valueUSDC, FIXED_POINT_DECIMALS) })), totalUSDC: parseRawAmount(vaultState.totalAssetsUSDC, FIXED_POINT_DECIMALS) }
+      : projectHoldings(decision, vaultState, assets, marketData);
+
+  if (decision.action === "LP_OPEN") {
+    if (decision.tickLower === undefined || decision.tickUpper === undefined) {
+      throw new Error("LP_OPEN decision is missing tickLower/tickUpper, cannot check range width.");
+    }
+    const width = decision.tickUpper - decision.tickLower;
+    if (width < policyLimits.minLpTickRangeWidth) {
+      violations.push(
+        violation(
+          "LP_RANGE_TOO_NARROW",
+          `Proposed tick range width ${width} is below minLpTickRangeWidth (${policyLimits.minLpTickRangeWidth}), too narrow, maximizes manipulation/impermanent-loss exposure for minimal capital.`,
+        ),
+      );
+    }
+  }
 
   let stableBps = 0;
   for (const holding of projectedHoldings) {
@@ -231,8 +291,53 @@ export function checkPolicyOffchain(params: OffchainPolicyCheckParams): PolicyCh
         ),
       );
     }
+    // Defense in depth, independent of systemPrompt.ts's own guidance on
+    // ENTER/EXIT amount units (see that file): a real bug already produced
+    // a projected allocation in the hundreds of millions of bps (an ENTER
+    // amount meant as "20% of NAV" written as a literal asset-unit count
+    // for an asset priced in the tens of thousands of dollars). That is
+    // categorically different from a merely over-cap trade, MAX_ALLOCATION_EXCEEDED's
+    // own message ("Xbps exceeds Ybps") reads the same for both and does
+    // not make the likely root cause obvious. IMPLAUSIBLE_ALLOCATION_BPS_THRESHOLD
+    // is set far above any real cap this project configures (highest
+    // today is 4500bps, see scripts/paperVaultConfig.ts) specifically so
+    // this only ever fires for a magnitude no legitimate single-asset
+    // allocation could ever reach, never a false positive on a real,
+    // deliberately large but sane trade.
+    if (allocationBps > IMPLAUSIBLE_ALLOCATION_BPS_THRESHOLD) {
+      violations.push(
+        violation(
+          "IMPLAUSIBLE_ALLOCATION_MAGNITUDE",
+          `${holding.asset} amount appears out of reasonable range, possible unit mismatch: projected allocation ${allocationBps}bps is far beyond any plausible single-asset allocation (over ${IMPLAUSIBLE_ALLOCATION_BPS_THRESHOLD}bps). This usually means the decision's amount field was expressed in the wrong units (e.g. a target percentage or USD value written as if it were the target asset's own unit count), not a deliberately large trade. See systemPrompt.ts's guidance on ENTER/EXIT amount units.`,
+        ),
+      );
+    }
     if (policyLimits.isStableAsset[holding.asset]) {
       stableBps += allocationBps;
+    }
+
+    // Mirrors executor/keeperService.ts's/keeperServiceV4.ts's own
+    // requireIndependentReferencePriceToBuy exactly, just earlier: a net
+    // increase (buy) in an asset with no genuinely independent reference
+    // price would be refused at the keeper's execution step regardless,
+    // so surface it here instead, at ops-review time, rather than let a
+    // decision reach "confirmed" only to fail with a late, confusing
+    // EXECUTION_FAILED alert. Naturally only ever fires for ENTER (always
+    // a buy of decision.asset) and REBALANCE (per-asset, only when this
+    // asset's target weight exceeds its current one) -- HOLD/EXIT/LP_*/
+    // BRIDGE_* never produce a net increase here, see projectHoldings's
+    // and this function's own doc comments on how each action projects.
+    // Selling (reducing this asset's weight) is never affected, same
+    // asymmetry the keeper's own check applies.
+    const currentHoldingEntry = vaultState.holdings.find((h) => h.asset === holding.asset);
+    const currentValueUSDC = currentHoldingEntry ? parseRawAmount(currentHoldingEntry.valueUSDC, FIXED_POINT_DECIMALS) : 0n;
+    if (holding.valueUSDC > currentValueUSDC && !hasIndependentReferencePrice(holding.asset)) {
+      violations.push(
+        violation(
+          "INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY",
+          `${holding.asset} allocation would increase (a net buy), but no genuinely independent reference price source exists for it yet, so real execution would be refused at the keeper's own execution step (see executor/keeperService.ts's requireIndependentReferencePriceToBuy and agent/core/tools/getMarketData.ts's hasIndependentReferencePrice). Reducing this asset's allocation remains fine; only a net increase is blocked until this is fixed.`,
+        ),
+      );
     }
   }
   if (stableBps < policyLimits.minStableAllocationBps) {
@@ -249,11 +354,134 @@ export function checkPolicyOffchain(params: OffchainPolicyCheckParams): PolicyCh
   // handles, same as VaultPolicy.sol's own currentDrawdownBps input, which
   // only the keeper's real trade simulation (not built yet) could actually
   // change ahead of execution.
-  if (vaultState.currentDrawdownBps > policyLimits.maxDrawdownBps) {
+  //
+  // REBALANCE is exempt from this check ONLY when the caller explicitly
+  // passes rebalanceExemptFromMaxDrawdown: true (v5's real caller does this;
+  // v1-v4's callers never pass it, so their behavior here is byte-for-byte
+  // unchanged). Mirrors contracts/VaultPolicy.sol's own onchain exemption
+  // for the same action, itself only compiled into v5+ bytecode -- see that
+  // file's own comment on the reasoning (a REBALANCE's resulting allocation
+  // stays fully bounded by maxAllocationBpsPerAsset/minStableAllocationBps
+  // regardless of this check, so exempting it here cannot let REBALANCE push
+  // the vault past those separate, still-enforced caps).
+  const rebalanceExempt = decision.action === "REBALANCE" && rebalanceExemptFromMaxDrawdown === true;
+  if (!rebalanceExempt && vaultState.currentDrawdownBps > policyLimits.maxDrawdownBps) {
     violations.push(
       violation(
         "MAX_DRAWDOWN_EXCEEDED",
         `currentDrawdownBps (${vaultState.currentDrawdownBps}) exceeds maxDrawdownBps (${policyLimits.maxDrawdownBps}).`,
+      ),
+    );
+  }
+
+  // v3 only: vaultState.lpPositions is always empty for v1/v2, so this is
+  // a no-op loop for them. Mirrors VaultPolicy.sol's own currentLpPositions
+  // loop exactly, including the exemption fixed there 2026-07-14: a
+  // breached position blocks everything except LP_DECREASE/LP_COLLECT/
+  // LP_CLOSE targeting that exact position's own tokenId (via
+  // decision.lpTokenId), or EMERGENCY_EXIT_TO_STABLE (already bypassed
+  // above). Before that fix, this offchain loop had no such exemption
+  // either, which would have silently diverged from the onchain fix (this
+  // pre-check rejecting a decision the real contract would now accept),
+  // breaking the "offchain pre-check must never diverge from onchain" rule.
+  const isReduceOrCloseAction = decision.action === "LP_DECREASE" || decision.action === "LP_COLLECT" || decision.action === "LP_CLOSE";
+  let lpBps = 0;
+  for (const position of vaultState.lpPositions) {
+    const currentValueUSDC = parseRawAmount(position.valueUSDC, FIXED_POINT_DECIMALS);
+    const openValueUSDC = parseRawAmount(position.openValueUSDC, FIXED_POINT_DECIMALS);
+    lpBps += bpsOf(currentValueUSDC, projectedTotalUSDC);
+
+    const isTargetOfReduceOrClose = isReduceOrCloseAction && decision.lpTokenId === position.tokenId;
+    if (isTargetOfReduceOrClose) continue;
+
+    if (openValueUSDC > 0n) {
+      const floor = (openValueUSDC * BigInt(10_000 - policyLimits.maxLpPositionValueLossBps)) / BPS_DENOMINATOR;
+      if (currentValueUSDC < floor) {
+        violations.push(
+          violation(
+            "LP_POSITION_VALUE_LOSS_EXCEEDED",
+            `Position ${position.tokenId} (pool ${position.pool}) current value ${position.valueUSDC} USDC has fallen more than maxLpPositionValueLossBps (${policyLimits.maxLpPositionValueLossBps}bps) below its open value ${position.openValueUSDC} USDC.`,
+          ),
+        );
+      }
+    }
+
+    if (!position.inRange && position.outOfRangeSince) {
+      const outOfRangeSeconds = (now.getTime() - new Date(position.outOfRangeSince).getTime()) / 1000;
+      if (outOfRangeSeconds > policyLimits.maxLpOutOfRangeSeconds) {
+        violations.push(
+          violation(
+            "LP_OUT_OF_RANGE_TOO_LONG",
+            `Position ${position.tokenId} (pool ${position.pool}) has been out of its price range for ${outOfRangeSeconds.toFixed(0)}s, exceeding maxLpOutOfRangeSeconds (${policyLimits.maxLpOutOfRangeSeconds}).`,
+          ),
+        );
+      }
+    }
+
+    const poolLiquidityAtOpen = BigInt(position.poolLiquidityAtOpen);
+    if (poolLiquidityAtOpen > 0n) {
+      const currentPoolLiquidity = BigInt(position.currentPoolLiquidity);
+      const ratioBps = Number((currentPoolLiquidity * BPS_DENOMINATOR) / poolLiquidityAtOpen);
+      if (ratioBps < policyLimits.minLpPoolLiquidityRatioBps) {
+        violations.push(
+          violation(
+            "LP_POOL_LIQUIDITY_DROPPED",
+            `Position ${position.tokenId} (pool ${position.pool}) pool liquidity has dropped to ${ratioBps}bps of its value at open, below minLpPoolLiquidityRatioBps (${policyLimits.minLpPoolLiquidityRatioBps}bps).`,
+          ),
+        );
+      }
+    }
+  }
+  if (lpBps > policyLimits.maxLpAllocationBps) {
+    violations.push(
+      violation(
+        "LP_MAX_ALLOCATION_EXCEEDED",
+        `Total LP position value ${lpBps}bps of NAV exceeds maxLpAllocationBps (${policyLimits.maxLpAllocationBps}bps).`,
+      ),
+    );
+  }
+
+  // v4 only: vaultState.currentLendingPositions is always empty for
+  // v1/v2/v3, so this is a no-op loop for them. Mirrors
+  // VaultPolicy.sol's own currentLendingPositions loop exactly, including
+  // its two exemptions: a position already WITHDRAWAL_PENDING/
+  // IN_TRANSIT_BACK is already being unwound and is skipped
+  // unconditionally (unlike the LP loop, there is only one narrowing
+  // action here, BRIDGE_WITHDRAW, and a position already mid-unwind can
+  // never be the target of a new one); a position that IS the target of
+  // this exact BRIDGE_WITHDRAW (matched by decision.bridgePositionId,
+  // this module's own name for onchain's lendingPositionId, see
+  // shared/decision.ts) is exempt from the staleness check so the one
+  // action that could actually resolve a stale position is never blocked
+  // by the very staleness it would resolve.
+  let lendingBps = 0;
+  for (const position of vaultState.currentLendingPositions) {
+    lendingBps += position.currentAllocationBps;
+
+    const alreadyUnwinding = position.status === "WITHDRAWAL_PENDING" || position.status === "IN_TRANSIT_BACK";
+    if (alreadyUnwinding) continue;
+
+    const isTargetOfWithdraw = decision.action === "BRIDGE_WITHDRAW" && position.positionId === decision.bridgePositionId;
+    if (isTargetOfWithdraw) continue;
+
+    const awaitingConfirmation = position.status === "OPEN" || position.status === "IN_TRANSIT_OUT";
+    if (awaitingConfirmation) {
+      const secondsSinceReport = (now.getTime() - new Date(position.lastReportedAt).getTime()) / 1000;
+      if (secondsSinceReport > policyLimits.lendingPositionForceUnwindSeconds) {
+        violations.push(
+          violation(
+            "LENDING_POSITION_STALE",
+            `Lending position ${position.positionId} (chain ${position.chainId}) has not been reported in ${secondsSinceReport.toFixed(0)}s, exceeding lendingPositionForceUnwindSeconds (${policyLimits.lendingPositionForceUnwindSeconds}).`,
+          ),
+        );
+      }
+    }
+  }
+  if (lendingBps > policyLimits.maxLendingAllocationBps) {
+    violations.push(
+      violation(
+        "LENDING_MAX_ALLOCATION_EXCEEDED",
+        `Total lending position value ${lendingBps}bps of NAV exceeds maxLendingAllocationBps (${policyLimits.maxLendingAllocationBps}bps).`,
       ),
     );
   }

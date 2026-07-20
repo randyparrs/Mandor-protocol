@@ -1,5 +1,8 @@
-// Real deployment to Arc Testnet. Review every value below before running.
-// Run with: npx hardhat run scripts/deployArcTestnet.ts --network arcTestnet
+// LEGACY (v1, discontinued): real deployment to Arc Testnet. Review every
+// value below before running. Kept here, not in scripts/, for historical
+// record only -- v1 (USDC-only, HOLD/REBALANCE only) has no real yield
+// mechanism and is superseded by v3/v4/v5. See legacy/README.md.
+// Run with: npx hardhat run legacy/deployArcTestnet.ts --network arcTestnet
 //
 // Sequence: the deployer wallet (Claude CLI's ARC_PRIVATE_KEY) holds
 // ADMIN_ROLE/DEFAULT_ADMIN_ROLE TEMPORARILY, only long enough to grant the

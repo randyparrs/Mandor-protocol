@@ -12,8 +12,11 @@
   "include": ["agent/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts", "executor/**/*.ts", "server/**/*.ts", "test/**/*.ts"],
   "exclude": [
     "scripts/showDeployerAddress.ts",
-    "scripts/deployArcTestnet.ts",
-    "scripts/deployVaultV2.ts",
+    "scripts/deployVaultV3.ts",
+    "scripts/grantGovernanceRoleToSafe.ts",
+    "scripts/deployVaultV4.ts",
+    "scripts/deployVaultV5.ts",
+    "scripts/deployLendingPositionRegistryV4.ts",
     "test/CapitalLimitRegistry.ts",
     "test/MandateVault.ts",
     "test/VaultFactory.ts",

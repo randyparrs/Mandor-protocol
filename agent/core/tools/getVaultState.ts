@@ -16,11 +16,72 @@ const MANDATE_VAULT_ABI = [
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "assetDecimals", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint8" }] },
   { type: "function", name: "lastKnownPriceUSDC", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+  // v4 only. Public state var, reverts to address(0) on v1/v2/v3's real
+  // deployed bytecode? No -- it simply does not exist there at all (their
+  // real shape predates this field), so this read must only ever be
+  // attempted for a real v4 vault, see the try/catch below.
+  { type: "function", name: "lendingRegistry", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  // v3 only, always returns an empty array for v1/v2 (no LP positions
+  // ever held), see contracts/MandateVault.sol's own doc comment.
+  {
+    type: "function",
+    name: "currentLpPositions",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        type: "tuple[]",
+        components: [
+          { name: "tokenId", type: "uint256" },
+          { name: "pool", type: "address" },
+          { name: "currentAllocationBps", type: "uint16" },
+          { name: "openValueUSDC", type: "uint256" },
+          { name: "currentValueUSDC", type: "uint256" },
+          { name: "inRange", type: "bool" },
+          { name: "outOfRangeSince", type: "uint256" },
+          { name: "poolLiquidityAtOpen", type: "uint128" },
+          { name: "currentPoolLiquidity", type: "uint128" },
+        ],
+      },
+    ],
+  },
 ] as const;
 
 const VAULT_POLICY_ABI = [
   { type: "function", name: "paused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
 ] as const;
+
+// v4 only. LendingPositionRegistry's own real, existing public view (see
+// contracts/LendingPositionRegistry.sol), read directly rather than adding
+// a matching convenience getter to MandateVault.sol itself: v1/v2/v3's
+// real deployed vaults already exist and are immutable, this avoids ever
+// needing a MandateVault.sol change (or a redeploy) just to expose this.
+const LENDING_POSITION_REGISTRY_ABI = [
+  {
+    type: "function",
+    name: "currentPositions",
+    stateMutability: "view",
+    inputs: [{ name: "nav", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple[]",
+        components: [
+          { name: "positionId", type: "uint256" },
+          { name: "chainId", type: "uint256" },
+          { name: "status", type: "uint8" },
+          { name: "currentAllocationBps", type: "uint16" },
+          { name: "principalUSDC", type: "uint256" },
+          { name: "currentValueUSDC", type: "uint256" },
+          { name: "lastReportedAt", type: "uint256" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+// Mirrors LendingPositionRegistry.sol's LendingPositionStatus enum order
+// exactly (Solidity enums are just uint8 indices in declaration order).
+const LENDING_POSITION_STATUS_BY_INDEX = ["IN_TRANSIT_OUT", "OPEN", "WITHDRAWAL_PENDING", "IN_TRANSIT_BACK"] as const;
 
 export interface KnownAsset {
   symbol: AssetSymbol;
@@ -50,12 +111,13 @@ export async function getVaultState(
     functionName: "policy",
   });
 
-  const [totalAssetsRaw, currentDrawdownBps, tradesToday, highWaterMarkRaw, paused] = await Promise.all([
+  const [totalAssetsRaw, currentDrawdownBps, tradesToday, highWaterMarkRaw, paused, rawLpPositions] = await Promise.all([
     publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "totalAssets" }),
     publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentDrawdownBps" }),
     publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "tradesToday" }),
     publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "highWaterMarkUSDC" }),
     publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_ABI, functionName: "paused" }),
+    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentLpPositions" }),
   ]);
 
   const baseAsset = assets.find((a) => a.isBaseAsset);
@@ -112,6 +174,63 @@ export async function getVaultState(
     }),
   );
 
+  // v3 only: openValueUSDC/currentValueUSDC come back in the same
+  // base-asset-native scale as totalAssetsRaw/highWaterMarkRaw above
+  // (MandateVault.sol's _valueLpPositions reuses the same _valueInUSDC
+  // scale as everything else in that contract), rescaled to the shared
+  // internal fixed point the same way. poolLiquidityAtOpen/
+  // currentPoolLiquidity are raw pool liquidity units, not a USD amount,
+  // so they are passed through as plain decimal strings, no rescaling.
+  const lpPositions = rawLpPositions.map((p) => ({
+    tokenId: p.tokenId.toString(),
+    pool: p.pool,
+    valueUSDC: formatRawAmount(scaleToInternalFixedPoint(p.currentValueUSDC, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
+    openValueUSDC: formatRawAmount(scaleToInternalFixedPoint(p.openValueUSDC, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
+    inRange: p.inRange,
+    outOfRangeSince: p.outOfRangeSince > 0n ? new Date(Number(p.outOfRangeSince) * 1000).toISOString() : null,
+    poolLiquidityAtOpen: p.poolLiquidityAtOpen.toString(),
+    currentPoolLiquidity: p.currentPoolLiquidity.toString(),
+  }));
+
+  // v4 only. Read defensively, never as part of the Promise.all batch
+  // above: v1/v2/v3's real deployed vaults predate this field entirely
+  // (confirmed live via cast --trace, see executor/keeperService.ts's own
+  // "INTENTIONAL FORK" note), so calling lendingRegistry() against them
+  // reverts (wrong selector), not just returns address(0). A single vault-
+  // wide try/catch around this optional read, rather than forking this
+  // whole file the way keeperService.ts was forked, is the right amount of
+  // caution for a plain, no-side-effect view call: unlike executeDecision's
+  // exact struct-shape encoding (where getting it wrong risks a silent
+  // wrong-selector call), a failed read here has one obvious, safe
+  // fallback (treat as "no lending capability"), so a shared file stays
+  // correct for every vault version without needing its own duplicate.
+  let currentLendingPositions: VaultState["currentLendingPositions"] = [];
+  try {
+    const lendingRegistryAddress = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "lendingRegistry" });
+    if (lendingRegistryAddress !== "0x0000000000000000000000000000000000000000") {
+      const rawLendingPositions = await publicClient.readContract({
+        address: lendingRegistryAddress,
+        abi: LENDING_POSITION_REGISTRY_ABI,
+        functionName: "currentPositions",
+        args: [totalAssetsRaw],
+      });
+      currentLendingPositions = rawLendingPositions.map((p) => ({
+        positionId: p.positionId.toString(),
+        chainId: p.chainId.toString(),
+        status: LENDING_POSITION_STATUS_BY_INDEX[p.status],
+        currentAllocationBps: p.currentAllocationBps,
+        principalUSDC: formatRawAmount(scaleToInternalFixedPoint(p.principalUSDC, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
+        currentValueUSDC: formatRawAmount(scaleToInternalFixedPoint(p.currentValueUSDC, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
+        lastReportedAt: new Date(Number(p.lastReportedAt) * 1000).toISOString(),
+      }));
+    }
+  } catch {
+    // v1/v2/v3's real vaults: lendingRegistry() does not exist on their
+    // real deployed bytecode at all, this is the expected, harmless path
+    // for every vault version except v4, never rethrown.
+    currentLendingPositions = [];
+  }
+
   return {
     vaultId: vaultAddress,
     totalAssetsUSDC: formatRawAmount(scaleToInternalFixedPoint(totalAssetsRaw, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
@@ -120,5 +239,7 @@ export async function getVaultState(
     tradesToday: Number(tradesToday),
     highWaterMarkUSDC: formatRawAmount(scaleToInternalFixedPoint(highWaterMarkRaw, baseAssetDecimals), INTERNAL_FIXED_POINT_DECIMALS),
     currentDrawdownBps: currentDrawdownBps,
+    lpPositions,
+    currentLendingPositions,
   };
 }

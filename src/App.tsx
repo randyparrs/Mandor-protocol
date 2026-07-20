@@ -5,6 +5,8 @@ import { readVaultState, type VaultReadState } from "./lib/vaultReads";
 import { approveSpend, depositToVault, withdrawFromVault } from "./lib/vaultActions";
 import { fetchDecisionTimeline, type DecisionTimelineEntry, type TimelineIndexedEvent } from "./lib/timeline";
 import { DecisionTimeline, VaultLevelEvents } from "./components/DecisionTimeline";
+import { fetchPaperVaultTimeline, type PaperVaultTimelineEntry } from "./lib/paperVaultTimeline";
+import { PaperVaultTimeline } from "./components/PaperVaultTimeline";
 import { VAULTS, BASE_ASSET_DECIMALS } from "./lib/vaults";
 import { parseRawAmount } from "../shared/money";
 
@@ -40,6 +42,8 @@ export default function App() {
   const [timelineEntries, setTimelineEntries] = useState<DecisionTimelineEntry[] | null>(null);
   const [vaultEvents, setVaultEvents] = useState<TimelineIndexedEvent[] | null>(null);
   const [timelineBusy, setTimelineBusy] = useState(false);
+  const [paperVaultEntries, setPaperVaultEntries] = useState<PaperVaultTimelineEntry[] | null>(null);
+  const [paperVaultBusy, setPaperVaultBusy] = useState(false);
 
   const vault = VAULTS.find((v) => v.id === vaultId)!;
   const appendLog = (line: string) => setLog((prev) => [...prev, line]);
@@ -87,6 +91,18 @@ export default function App() {
       appendLog(`Error loading decision timeline: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setTimelineBusy(false);
+    }
+  }
+
+  async function handleRefreshPaperVaultTimeline() {
+    setPaperVaultBusy(true);
+    try {
+      const entries = await fetchPaperVaultTimeline();
+      setPaperVaultEntries(entries);
+    } catch (error) {
+      appendLog(`Error loading paper vault timeline: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPaperVaultBusy(false);
     }
   }
 
@@ -209,6 +225,26 @@ export default function App() {
       )}
 
       {timelineEntries && <DecisionTimeline entries={timelineEntries} />}
+
+      {/* Paper Vault: a separate, synthetic vault (scripts/paperVaultCycle.ts,
+          shared/paperVaultState.ts), not tied to the v1/v2 picker above, no
+          wallet required to view. Kept in its own section with its own
+          heading and its own aggressively-labeled component
+          (PaperVaultTimeline), never mixed into the real timeline above,
+          per Randy's explicit ask that this can never read as real
+          activity, even to someone skimming or screenshotting the page. */}
+      <h2>Paper Vault (Simulated Trading, Demo Only)</h2>
+      <p style={{ fontSize: 13, color: "#666" }}>
+        A separate, permissive-risk demo vault that reasons over real market data but never executes onchain and never touches real funds. Shown here purely to demonstrate a richer variety of AI decisions than the conservative real vaults above typically produce.
+      </p>
+      <button onClick={handleRefreshPaperVaultTimeline} disabled={paperVaultBusy}>
+        {paperVaultBusy ? "Loading..." : "Load paper vault history"}
+      </button>
+      {paperVaultEntries && (
+        <div style={{ marginTop: "1rem" }}>
+          <PaperVaultTimeline entries={paperVaultEntries} />
+        </div>
+      )}
 
       {!ready && <p>Loading...</p>}
 

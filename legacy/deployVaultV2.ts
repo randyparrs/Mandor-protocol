@@ -1,11 +1,13 @@
-// Deploys a second MandateVault+VaultPolicy pair (USDC base asset plus
-// cirBTC), reusing the already-deployed MandateRoles/VaultFactory/
-// CapitalLimitRegistry as-is, see docs/deployments.md and the analysis
-// this script followed. Unlike scripts/deployArcTestnet.ts, this needs the
-// real ADMIN_ROLE holder to sign (VaultFactory.createVault is
-// onlyAdmin-gated), never the original deployer wallet, which renounced
-// ADMIN_ROLE right after the first deploy.
-// Run with: npx hardhat run scripts/deployVaultV2.ts --network arcTestnet
+// LEGACY (v2, discontinued): deploys a second MandateVault+VaultPolicy pair
+// (USDC base asset plus cirBTC), reusing the already-deployed MandateRoles/
+// VaultFactory/CapitalLimitRegistry as-is, see docs/deployments.md and the
+// analysis this script followed. Kept here, not in scripts/, for historical
+// record only -- v2 (USDC + cirBTC, HOLD/REBALANCE only) has no real yield
+// mechanism and is superseded by v3/v4/v5. See legacy/README.md.
+// Unlike legacy/deployArcTestnet.ts, this needs the real ADMIN_ROLE holder
+// to sign (VaultFactory.createVault is onlyAdmin-gated), never the original
+// deployer wallet, which renounced ADMIN_ROLE right after the first deploy.
+// Run with: npx hardhat run legacy/deployVaultV2.ts --network arcTestnet
 //
 // Requires hardhat.config.ts's arcTestnet.accounts[1]
 // (ARC_ADMIN_PRIVATE_KEY, set via `npx hardhat keystore set

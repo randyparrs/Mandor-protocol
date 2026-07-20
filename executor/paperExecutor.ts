@@ -14,6 +14,13 @@ export interface PaperExecutionResult extends ExecutionResult {
   mode: "paper";
   decision: VaultDecision;
   policyCheck: PolicyCheckResult;
+  // Same optional, explainability-only fields server/decisionPipeline.ts's
+  // DecisionPipelineEntry carries for real decisions (see that file's own
+  // doc comment on thinkingText/thinkingTokens): a caller that has them
+  // (proposeDecision's own ProposeDecisionResult) can pass them through so
+  // Paper Vault's timeline is just as rich as the real one, never required.
+  thinkingText?: string | null;
+  thinkingTokens?: number | null;
 }
 
 // Anchored to this project's own root (shared/paths.ts), not process.cwd(),
@@ -29,12 +36,20 @@ const DEFAULT_LOG_PATH = projectDataPath("paperVaultDecisions.jsonl");
 export class PaperExecutor implements Executor {
   constructor(private readonly logPath: string = DEFAULT_LOG_PATH) {}
 
-  async execute(decision: VaultDecision, policyCheck: PolicyCheckResult): Promise<PaperExecutionResult> {
+  // thinkingText/thinkingTokens are extra optional parameters beyond what
+  // the Executor interface itself requires (TypeScript's structural typing
+  // allows an implementing method to accept more optional params than the
+  // interface declares), so this stays a valid Executor while letting a
+  // caller with a full ProposeDecisionResult (scripts/paperVaultCycle.ts)
+  // pass them through.
+  async execute(decision: VaultDecision, policyCheck: PolicyCheckResult, thinkingText?: string | null, thinkingTokens?: number | null): Promise<PaperExecutionResult> {
     const result: PaperExecutionResult = {
       mode: "paper",
       executedAt: new Date().toISOString(),
       decision,
       policyCheck,
+      thinkingText,
+      thinkingTokens,
     };
     await mkdir(path.dirname(this.logPath), { recursive: true });
     await appendFile(this.logPath, `${JSON.stringify(result)}\n`, "utf8");

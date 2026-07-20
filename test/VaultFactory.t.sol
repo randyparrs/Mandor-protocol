@@ -31,7 +31,17 @@ contract VaultFactoryTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 18);
         eurc = new MockERC20("Euro Coin", "EURC", 6);
         router = new MockSwapRouter();
-        vaultDeployer = new MandateVaultDeployer();
+        // See test/MandateVaultDeployerBytecode.t.sol for why this takes
+        // fragmented constructor arguments now: MandateVault's real
+        // creation code (26,576 bytes) is itself over the 24,576-byte
+        // EIP-170 limit that each individual BytecodePointer fragment must
+        // respect, discovered live (docs/deployments.md's v4 section).
+        // Foundry resolves MandateVault's real library linking
+        // (TickMath/LiquidityAmounts) transparently for local test/script
+        // bytecode, same as it always has for `new MandateVault(...)`
+        // elsewhere in this suite, so vm.getCode here returns real,
+        // ready-to-deploy creation bytecode, not a placeholder.
+        vaultDeployer = new MandateVaultDeployer(_chunkBytecode(vm.getCode("MandateVault.sol:MandateVault"), 24_000));
         capitalLimitRegistry = new CapitalLimitRegistry(address(roles), DEFAULT_MAX_TOTAL_ASSETS);
 
         factory = new VaultFactory(address(roles), treasury, vaultDeployer, address(capitalLimitRegistry));
@@ -71,9 +81,19 @@ contract VaultFactoryTest is Test {
                 drawdownSpeedWindowSeconds: 3600,
                 assets: assets,
                 maxAllocationBps: maxBps,
-                stableAssets: stableAssets
+                stableAssets: stableAssets,
+                minLpTickRangeWidth: 0,
+                maxLpPositionValueLossBps: 0,
+                maxLpOutOfRangeSeconds: 0,
+                minLpPoolLiquidityRatioBps: 0,
+                maxLpAllocationBps: 0,
+                lendingReportStaleAfterSeconds: 0,
+                lendingReportMaxDeviationBps: 0,
+                lendingPositionForceUnwindSeconds: 0,
+                maxLendingAllocationBps: 0
             }),
-            seedAmount: seedAmount
+            seedAmount: seedAmount,
+            cctpTokenMessenger: address(0)
         });
     }
 
@@ -98,7 +118,7 @@ contract VaultFactoryTest is Test {
         address[] memory otherAssets = new address[](0);
         vm.prank(caller);
         vm.expectRevert();
-        vaultDeployer.deploy(IERC20(address(usdc)), address(roles), address(router), "Rogue Vault", "rUSDC", otherAssets);
+        vaultDeployer.deploy(IERC20(address(usdc)), address(roles), address(router), "Rogue Vault", "rUSDC", otherAssets, address(0));
     }
 
     /// @dev No matter the seed amount, there is never a window where the
@@ -114,7 +134,7 @@ contract VaultFactoryTest is Test {
     }
 
     function test_createVaultRevertsWhenCapitalLimitRegistryUnset() public {
-        MandateVaultDeployer freshDeployer = new MandateVaultDeployer();
+        MandateVaultDeployer freshDeployer = new MandateVaultDeployer(_chunkBytecode(vm.getCode("MandateVault.sol:MandateVault"), 24_000));
         VaultFactory factoryWithoutRegistry = new VaultFactory(address(roles), treasury, freshDeployer, address(0));
         freshDeployer.setFactory(address(factoryWithoutRegistry));
         usdc.approve(address(factoryWithoutRegistry), type(uint256).max);
@@ -140,5 +160,28 @@ contract VaultFactoryTest is Test {
         vm.expectRevert();
         v.deposit(room + 1, depositor);
         vm.stopPrank();
+    }
+
+    /// @dev Splits arbitrary bytes into fragments no larger than
+    /// maxChunkSize, in order -- the contract under test doesn't care how
+    /// chunking happened, only that fragments are correct and in order
+    /// (see MandateVaultDeployer's own doc comment), so this test-side
+    /// chunker is deliberately independent from whatever the real deploy
+    /// script's own chunkBytecode() does, not required to match it byte
+    /// for byte in implementation.
+    function _chunkBytecode(bytes memory data, uint256 maxChunkSize) internal pure returns (bytes[] memory chunks) {
+        uint256 total = data.length;
+        uint256 count = (total + maxChunkSize - 1) / maxChunkSize;
+        chunks = new bytes[](count);
+        for (uint256 i = 0; i < count; i++) {
+            uint256 start = i * maxChunkSize;
+            uint256 end = start + maxChunkSize;
+            if (end > total) end = total;
+            bytes memory chunk = new bytes(end - start);
+            for (uint256 j = start; j < end; j++) {
+                chunk[j - start] = data[j];
+            }
+            chunks[i] = chunk;
+        }
     }
 }

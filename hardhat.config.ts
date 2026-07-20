@@ -7,12 +7,19 @@ export default defineConfig({
   solidity: {
     version: "0.8.28",
     settings: {
-      // Matches foundry.toml's optimizer settings. Without this,
-      // MandateVaultDeployer.sol exceeds the EIP-170 24576-byte contract
-      // size limit under Hardhat's unoptimized default, even though it
-      // compiles fine under Foundry, which enables the optimizer by default
-      // in this project's config.
-      optimizer: { enabled: true, runs: 200 },
+      // Matches foundry.toml's optimizer settings exactly. runs: 1 + viaIR
+      // (not just runs: 200) became necessary once v3's LP logic pushed
+      // MandateVault.sol's real runtime bytecode to 25,498 bytes, over the
+      // EIP-170 24,576-byte limit real EVM chains actually enforce at
+      // deployment (confirmed via forge build --sizes, not just a compiler
+      // warning to ignore): runs: 1 alone only got to 24,956 (still over),
+      // viaIR's more aggressive optimization pipeline was needed to get to
+      // 22,894, real margin under the limit. Slower to compile, smaller and
+      // more gas-efficient-per-call than the legacy pipeline at this low a
+      // runs value, an acceptable tradeoff for a testnet/hackathon
+      // deployment over raw compile speed.
+      optimizer: { enabled: true, runs: 1 },
+      viaIR: true,
     },
   },
   networks: {

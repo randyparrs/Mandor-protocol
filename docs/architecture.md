@@ -607,3 +607,33 @@ seam Vpay uses for test vs. real signers, applied to the executor side.
 Monthly report generation is a separate Claude call path with its own system
 prompt and zero wiring to the `proposeDecision` tool, so it cannot produce a
 `VaultDecision` even in principle.
+
+## v3: yield-seeking LP vault (post-Phase-1 addition)
+
+A third `DecisionAction` family beyond simple rebalancing: `LP_OPEN`/
+`LP_INCREASE`/`LP_DECREASE`/`LP_COLLECT`/`LP_CLOSE`, the agent evaluating
+and managing real Uniswap-V3-style liquidity-provider positions on the
+real, verified UnitFlowV3 DEX, seeking real fee income rather than a
+directional bet. Same "new risk profile, new Vault+Policy pair, never a
+parameter change on a live one" rule above applies: v3 is its own
+deployment (`scripts/deployVaultV3.ts`), v1/v2's live bytecode never
+touched.
+
+Same architectural split as everything else here: `MandateVault.sol`
+handles mechanical execution correctness (an LP mint's price must fall
+inside the proposed range right now, checked fresh against the pool's own
+`slot0()` at the moment of minting), `VaultPolicy.sol` handles ongoing,
+deterministic risk limits over currently-held positions (value-loss since
+open, time spent out of range, the pool's own liquidity drop since open,
+total LP allocation as bps of NAV), and the agent's own strategy text
+carries the one trigger that cannot be verified by a single-block `view`
+call at all (a minimum estimated fee APR to enter), the same "things
+enforced deterministically onchain vs. things the agent reasons about"
+split `VaultPolicy`'s oracle-deviation design already established.
+
+Full design rationale, the real onchain infrastructure this targets, the
+current disclosed restriction (no independent cirBTC reference price
+exists yet, so real `LP_OPEN`/`LP_INCREASE` execution is blocked today,
+same situation as v2's cirBTC `ENTER`), and two real bugs found and fixed
+before this vault was considered ready: see `docs/deployments.md`'s v3
+section and `executor/README.md`'s "v3's LP mechanism" section.

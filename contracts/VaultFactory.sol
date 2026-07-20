@@ -61,6 +61,11 @@ contract VaultFactory {
         address[] otherAssets;
         VaultPolicy.ConstructorLimits limits; // vault/roles fields are overwritten by this function
         uint256 seedAmount;
+        // v4 only, address(0) for v1/v2/v3 (no cross-chain lending
+        // capability wired). Circle's own canonical CCTP TokenMessenger
+        // for this chain, see MandateVault.sol's own doc comment on why
+        // this is a constructor argument, not a governance setter.
+        address cctpTokenMessenger;
     }
 
     /// @notice Deploys MandateVault, then its paired VaultPolicy (which
@@ -79,7 +84,9 @@ contract VaultFactory {
         // is guaranteed to be this real, known VaultFactory, never
         // spoofable by a third party calling the deployer directly.
         MandateVault v = MandateVault(
-            vaultDeployer.deploy(params.usdc, roles, params.initialSwapRouter, params.name, params.symbol, params.otherAssets)
+            vaultDeployer.deploy(
+                params.usdc, roles, params.initialSwapRouter, params.name, params.symbol, params.otherAssets, params.cctpTokenMessenger
+            )
         );
 
         params.limits.vault = address(v);

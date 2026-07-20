@@ -21,6 +21,7 @@
 // mutating methods (enqueue/confirm/reject/markExecuted) would throw the
 // moment they tried to persist, since they all end in store.upsert(...).
 import http from "node:http";
+import { readFile } from "node:fs/promises";
 import { DecisionPipeline } from "./decisionPipeline.js";
 import { DecisionStore } from "./db/decisionStore.js";
 import { EventStore } from "./db/eventStore.js";
@@ -67,6 +68,27 @@ function getVaultLevelEvents(policyAddress: string) {
   );
 }
 
+// scripts/paperVaultCycle.ts's simulated decision log (executor/paperExecutor.ts).
+// Exclusively paper-mode entries: PaperExecutor is never wired into any
+// real vault's cycle (only scripts/paperVaultCycle.ts constructs one), so
+// nothing real ever lands in this file. Read the same way as mandate.db
+// above: plain readFile, no write path exists anywhere in this server.
+const PAPER_VAULT_LOG_PATH = projectDataPath("paperVaultDecisions.jsonl");
+
+async function getPaperVaultEntries(): Promise<unknown[]> {
+  let raw: string;
+  try {
+    raw = await readFile(PAPER_VAULT_LOG_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  return raw
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 function bigintReplacer(_key: string, value: unknown): unknown {
   return typeof value === "bigint" ? value.toString() : value;
 }
@@ -102,6 +124,19 @@ const server = http.createServer((req, res) => {
     } finally {
       decisionStore.close();
     }
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/paper-vault-timeline") {
+    getPaperVaultEntries()
+      .then((entries) => {
+        // Newest first, same convention as /api/timeline above. executedAt
+        // is set by PaperExecutor.execute at write time.
+        const sorted = [...entries].sort(
+          (a, b) => new Date((b as { executedAt: string }).executedAt).getTime() - new Date((a as { executedAt: string }).executedAt).getTime(),
+        );
+        sendJson(res, 200, { entries: sorted });
+      })
+      .catch((error) => sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) }));
     return;
   }
   sendJson(res, 404, { error: "not found" });

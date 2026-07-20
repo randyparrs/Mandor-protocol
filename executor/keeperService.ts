@@ -3,6 +3,25 @@
 // MandateVault.executeDecision. See executor/README.md's "Must never do".
 // Never custodies vault assets, even transiently, swaps happen atomically
 // inside MandateVault itself, see docs/architecture.md.
+//
+// INTENTIONAL FORK, READ BEFORE FIXING A BUG HERE (2026-07-18): this file
+// targets v1/v2/v3's real, already-deployed Decision/executeDecision shape
+// specifically (no chainId/lendingPositionId/bridgeLeg -- those fields did
+// not exist yet when v1/v2/v3 were deployed, and each vault's real bytecode
+// is frozen at its own deploy time, confirmed live via cast --trace: the
+// v4-shaped ABI reverts immediately, wrong selector, against the real v3
+// vault). executor/keeperServiceV4.ts is a separate, deliberately
+// duplicated module for v4's newer struct shape, sharing most of this
+// file's logic by copy, not by import (same "new version = new deployment,
+// never touch a live one" principle already applied to the contracts
+// themselves, extended to this executor layer, Randy's own explicit
+// decision). scripts/runDecisionCycle.ts's real, scheduled production cycle
+// for v1/v2 depends on THIS file's ABI staying exactly as-is.
+//
+// Consequence: a security-relevant fix discovered in one of these two files
+// (e.g. a real swap/LP-leg sizing bug, a missing revert check, an
+// alerting gap) does NOT automatically apply to the other. Manually check
+// the other file whenever you fix something security-relevant here.
 import { privateKeyToAccount } from "viem/accounts";
 import { createWalletClient, defineChain, http, type Hex, type PublicClient } from "viem";
 import { buildProposeDecisionInput, buildPolicyLimitsStruct } from "../agent/core/context.js";
@@ -55,6 +74,34 @@ const POLICY_GETTER_ABI = [
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
 
+// The real, verified UnitFlowV3PositionManager (0x0553682bc188b850acd31CBd3500Dcd0aa35372B,
+// see docs/arc-facts-to-verify.md item 5 for why this specific instance
+// was chosen over the two older ones from the same deployer), just the
+// two read-only views buildLpLeg needs (current liquidity/range, to size
+// a real LP_DECREASE without guessing).
+const POSITION_MANAGER_MIN_ABI = [
+  {
+    type: "function",
+    name: "positions",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [
+      { name: "nonce", type: "uint96" },
+      { name: "operator", type: "address" },
+      { name: "token0", type: "address" },
+      { name: "token1", type: "address" },
+      { name: "fee", type: "uint24" },
+      { name: "tickLower", type: "int24" },
+      { name: "tickUpper", type: "int24" },
+      { name: "liquidity", type: "uint128" },
+      { name: "feeGrowthInside0LastX128", type: "uint256" },
+      { name: "feeGrowthInside1LastX128", type: "uint256" },
+      { name: "tokensOwed0", type: "uint128" },
+      { name: "tokensOwed1", type: "uint128" },
+    ],
+  },
+] as const;
+
 // Verified live, see docs/arc-facts-to-verify.md and hardhat.config.ts's
 // arcTestnet network entry. Defined here directly (not imported from
 // Hardhat config) since this module must run outside a Hardhat project,
@@ -66,12 +113,30 @@ const ARC_TESTNET = defineChain({
   rpcUrls: { default: { http: ["https://rpc.testnet.arc.network"] } },
 });
 
+// Mirrors contracts/interfaces/IVaultPolicy.sol's DecisionAction enum
+// order exactly (Solidity enums are just uint8 indices in declaration
+// order); the 5 LP_* values only ever matter for v3, see this project's
+// v3 design doc.
 const DECISION_ACTION_INDEX: Record<VaultDecision["action"], number> = {
   HOLD: 0,
   REBALANCE: 1,
   ENTER: 2,
   EXIT: 3,
   EMERGENCY_EXIT_TO_STABLE: 4,
+  LP_OPEN: 5,
+  LP_INCREASE: 6,
+  LP_DECREASE: 7,
+  LP_COLLECT: 8,
+  LP_CLOSE: 9,
+  // v4 only, unreachable for v1/v2/v3 in practice (this file's own real
+  // vaults never receive these), present only so DecisionAction's shared,
+  // wider type (now that v4's actions exist) stays exhaustively mapped
+  // here, same pre-existing "index exists, action never actually reaches
+  // this file's real vaults" situation LP_OPEN..LP_CLOSE already are for
+  // v1/v2. See executor/keeperServiceV4.ts for the module that actually
+  // uses these.
+  BRIDGE_DEPOSIT: 10,
+  BRIDGE_WITHDRAW: 11,
 };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
@@ -104,6 +169,15 @@ const MANDATE_VAULT_KEEPER_ABI = [
               { name: "targetWeightBps", type: "uint16" },
             ],
           },
+          { name: "lpPool", type: "address" },
+          { name: "tickLower", type: "int24" },
+          { name: "tickUpper", type: "int24" },
+          { name: "amount0Desired", type: "uint256" },
+          { name: "amount1Desired", type: "uint256" },
+          { name: "amount0Min", type: "uint256" },
+          { name: "amount1Min", type: "uint256" },
+          { name: "lpTokenId", type: "uint256" },
+          { name: "liquidityToRemove", type: "uint128" },
         ],
       },
       {
@@ -130,10 +204,57 @@ const MANDATE_VAULT_KEEPER_ABI = [
           { name: "sqrtPriceLimitX96", type: "uint160" },
         ],
       },
+      {
+        name: "lpLeg",
+        type: "tuple",
+        components: [
+          { name: "pool", type: "address" },
+          { name: "fee", type: "uint24" },
+          { name: "tickLower", type: "int24" },
+          { name: "tickUpper", type: "int24" },
+          { name: "amount0Desired", type: "uint256" },
+          { name: "amount1Desired", type: "uint256" },
+          { name: "amount0Min", type: "uint256" },
+          { name: "amount1Min", type: "uint256" },
+          { name: "tokenId", type: "uint256" },
+          { name: "liquidity", type: "uint128" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
     ],
     outputs: [{ type: "bool" }],
   },
 ] as const;
+
+interface OnchainLpLeg {
+  pool: `0x${string}`;
+  fee: number;
+  tickLower: number;
+  tickUpper: number;
+  amount0Desired: bigint;
+  amount1Desired: bigint;
+  amount0Min: bigint;
+  amount1Min: bigint;
+  tokenId: bigint;
+  liquidity: bigint;
+  deadline: bigint;
+}
+
+// pool == ZERO_ADDRESS means "no LP action this call," the exact
+// convention MandateVault.sol's executeDecision itself uses.
+const EMPTY_LP_LEG: OnchainLpLeg = {
+  pool: "0x0000000000000000000000000000000000000000",
+  fee: 0,
+  tickLower: 0,
+  tickUpper: 0,
+  amount0Desired: 0n,
+  amount1Desired: 0n,
+  amount0Min: 0n,
+  amount1Min: 0n,
+  tokenId: 0n,
+  liquidity: 0n,
+  deadline: 0n,
+};
 
 interface OnchainAssetPrice {
   asset: `0x${string}`;
@@ -180,6 +301,20 @@ function resolveAssetAddress(symbol: AssetSymbol, assets: KnownAsset[]): `0x${st
   return known.address;
 }
 
+const EMPTY_ONCHAIN_DECISION_LP_FIELDS = {
+  lpPool: ZERO_ADDRESS,
+  tickLower: 0,
+  tickUpper: 0,
+  amount0Desired: 0n,
+  amount1Desired: 0n,
+  amount0Min: 0n,
+  amount1Min: 0n,
+  lpTokenId: 0n,
+  liquidityToRemove: 0n,
+};
+
+const LP_ACTIONS = new Set<VaultDecision["action"]>(["LP_OPEN", "LP_INCREASE", "LP_DECREASE", "LP_COLLECT", "LP_CLOSE"]);
+
 async function buildOnchainDecision(decision: VaultDecision, assets: KnownAsset[], publicClient: PublicClient, vaultAddress: `0x${string}`) {
   const actionIndex = DECISION_ACTION_INDEX[decision.action];
   if (decision.action === "ENTER" || decision.action === "EXIT") {
@@ -195,6 +330,7 @@ async function buildOnchainDecision(decision: VaultDecision, assets: KnownAsset[
       asset,
       amount: parseRawAmount(decision.amount, decimals),
       targetAllocations: [],
+      ...EMPTY_ONCHAIN_DECISION_LP_FIELDS,
     };
   }
   if (decision.action === "REBALANCE") {
@@ -209,11 +345,34 @@ async function buildOnchainDecision(decision: VaultDecision, assets: KnownAsset[
         asset: resolveAssetAddress(t.asset, assets),
         targetWeightBps: t.targetWeightBps,
       })),
+      ...EMPTY_ONCHAIN_DECISION_LP_FIELDS,
     };
   }
-  // HOLD and EMERGENCY_EXIT_TO_STABLE: asset/amount/targetAllocations are
-  // unused onchain, see IVaultPolicy.sol.
-  return { action: actionIndex, asset: ZERO_ADDRESS, amount: 0n, targetAllocations: [] };
+  if (LP_ACTIONS.has(decision.action)) {
+    // Only the fields VaultPolicy.sol's checks actually read from Decision
+    // directly matter here (lpPool/tickLower/tickUpper for LP_OPEN's range-
+    // width check); the real mint/increase/decrease amounts live on the
+    // separately-built LpLeg (buildLpLeg below), same "decision states
+    // intent, the leg carries fresh execution mechanics" split SwapLeg
+    // already uses.
+    if (decision.action === "LP_OPEN" && (decision.tickLower === undefined || decision.tickUpper === undefined || !decision.lpPool)) {
+      throw new Error("LP_OPEN decision is missing lpPool/tickLower/tickUpper, cannot build onchain calldata.");
+    }
+    return {
+      action: actionIndex,
+      asset: ZERO_ADDRESS,
+      amount: 0n,
+      targetAllocations: [],
+      ...EMPTY_ONCHAIN_DECISION_LP_FIELDS,
+      lpPool: decision.lpPool ?? ZERO_ADDRESS,
+      tickLower: decision.tickLower ?? 0,
+      tickUpper: decision.tickUpper ?? 0,
+      lpTokenId: decision.lpTokenId ? BigInt(decision.lpTokenId) : 0n,
+    };
+  }
+  // HOLD and EMERGENCY_EXIT_TO_STABLE: asset/amount/targetAllocations/LP
+  // fields are unused onchain, see IVaultPolicy.sol.
+  return { action: actionIndex, asset: ZERO_ADDRESS, amount: 0n, targetAllocations: [], ...EMPTY_ONCHAIN_DECISION_LP_FIELDS };
 }
 
 /// @notice Scale confirmed live, not guessed, and re-derived carefully
@@ -341,6 +500,31 @@ function requireIndependentReferencePriceToBuy(symbol: AssetSymbol): void {
   }
 }
 
+/// @notice v3's own extension of the exact same hard block above, applied
+/// to LP_OPEN/LP_INCREASE instead of a direct buy. Providing liquidity
+/// into a pool priced by an asset with no independent reference price is,
+/// if anything, a WORSE manipulation surface than a simple directional
+/// buy: an attacker can manipulate the pool's own spot price immediately
+/// before this vault mints/increases a position to force it into a bad
+/// range or an unfavorable amount0/amount1 split, and this vault's own
+/// LP valuation (MandateVault.sol's _valueLpPositions) reads that exact
+/// same manipulable spot price. Confirmed with Randy: both of v3's only
+/// two real-liquidity pools (WUSDC/cirBTC, EURC/cirBTC) involve cirBTC,
+/// so this blocks real LP_OPEN/LP_INCREASE execution entirely today,
+/// same documented, disclosed situation as v2's cirBTC ENTER, until an
+/// independent cirBTC feed exists. LP_DECREASE/LP_COLLECT/LP_CLOSE are
+/// deliberately NOT gated here, same "reducing exposure is always fine"
+/// rule as requireIndependentReferencePriceToBuy above.
+function requireIndependentReferencePriceForLp(pool: { token0Symbol: AssetSymbol; token1Symbol: AssetSymbol }): void {
+  for (const symbol of [pool.token0Symbol, pool.token1Symbol]) {
+    if (!hasIndependentReferencePrice(symbol)) {
+      throw new Error(
+        `Refusing to open/increase an LP position touching ${symbol}: no genuinely independent reference price source exists for it yet, so this vault's own LP position valuation (reading the pool's own spot price) cannot be meaningfully trusted (see agent/core/tools/getMarketData.ts's hasIndependentReferencePrice and docs/arc-facts-to-verify.md). Reducing or closing an existing position remains allowed; only opening/increasing new exposure is blocked until this is fixed.`,
+      );
+    }
+  }
+}
+
 /// @notice Real swap-leg construction for ENTER/EXIT/REBALANCE, quoting
 /// against the real UnitFlowV3 Quoter, respecting existing policy limits
 /// by construction (nothing here bypasses VaultPolicy, it only ever sizes
@@ -409,6 +593,16 @@ async function buildSwapLegs(
     return [await quoteAndBuildLeg(publicClient, targetAddress, baseAsset.address, feeFor(decision.asset), amountIn)];
   }
 
+  // Standalone LP_* actions (not wrapped in EMERGENCY_EXIT_TO_STABLE) need
+  // no swap legs at all: buildLpLeg alone builds their entire onchain
+  // effect, same "empty swaps for HOLD" convention. Found and fixed
+  // 2026-07-14: without this explicit return, every one of these 5 action
+  // types fell through to the REBALANCE branch below and threw ("REBALANCE
+  // decision is missing targetAllocations"), since none of them ever set
+  // decision.targetAllocations. This made the entire LP lifecycle
+  // unreachable via the real keeper before this fix.
+  if (LP_ACTIONS.has(decision.action)) return [];
+
   // REBALANCE: reduces to one leg per non-base asset whose target bps
   // differs from its current bps, reusing the same quote-and-build helper.
   // Today's real vaults hold at most one non-base asset (cirBTC on v2),
@@ -442,6 +636,130 @@ async function buildSwapLegs(
     }
   }
   return legs;
+}
+
+const POOL_MIN_ABI = [
+  { type: "function", name: "token0", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "token1", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+function symbolForAddress(address: `0x${string}`, assets: KnownAsset[]): AssetSymbol {
+  const known = assets.find((a) => a.address.toLowerCase() === address.toLowerCase());
+  if (!known) throw new Error(`Cannot resolve asset symbol for pool token address ${address}, it is not in the known-asset list.`);
+  return known.symbol;
+}
+
+/// @notice v3's own LP-leg construction, the LP counterpart to
+/// buildSwapLegs. Returns EMPTY_LP_LEG (pool == ZERO_ADDRESS, "no LP
+/// action this call") for every non-LP action, same convention an empty
+/// swaps[] already uses for HOLD.
+///
+/// LP_OPEN/LP_INCREASE are gated by requireIndependentReferencePriceForLp
+/// before any amount is computed, same "check first, never quote a
+/// blocked trade" order buildSwapLegs already follows for ENTER/REBALANCE
+/// buys. Confirmed today: this blocks both real actions entirely (v3's
+/// only two real-liquidity pools both involve cirBTC), the mechanism
+/// below is real and fork-testable, not currently reachable against real
+/// capital, same disclosed situation as v2's cirBTC ENTER.
+///
+/// LP_DECREASE/LP_COLLECT/LP_CLOSE deliberately use amount0Min/amount1Min
+/// = 0 (no slippage protection) for this round: unlike a fresh swap, a
+/// decrease only returns principal this vault already deposited, a lower-
+/// stakes operation than a new trade, and adding real protection here
+/// would require porting Uniswap's tick/liquidity math into TypeScript
+/// too (already done once, correctly, in contracts/lib/ for the onchain
+/// side). A real, honest gap, not built yet, flagged the same way this
+/// project already flags every other deliberately-deferred piece, never
+/// silently guessed.
+async function buildLpLeg(
+  decision: VaultDecision,
+  assets: KnownAsset[],
+  publicClient: PublicClient,
+  vaultAddress: `0x${string}`,
+): Promise<OnchainLpLeg> {
+  if (!LP_ACTIONS.has(decision.action)) return EMPTY_LP_LEG;
+
+  const positionManager = await publicClient.readContract({ address: vaultAddress, abi: [{ type: "function", name: "positionManager", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] }] as const, functionName: "positionManager" });
+  const deadline = BigInt(Math.floor(Date.now() / 1000)) + SWAP_DEADLINE_BUFFER_SECONDS;
+
+  if (decision.action === "LP_OPEN") {
+    if (!decision.lpPool || decision.tickLower === undefined || decision.tickUpper === undefined || !decision.amount0Desired || !decision.amount1Desired || decision.lpFeeTier === undefined) {
+      throw new Error("LP_OPEN decision is missing lpPool/tickLower/tickUpper/amount0Desired/amount1Desired/lpFeeTier, cannot build an LP leg.");
+    }
+    const [token0, token1] = await Promise.all([
+      publicClient.readContract({ address: decision.lpPool, abi: POOL_MIN_ABI, functionName: "token0" }),
+      publicClient.readContract({ address: decision.lpPool, abi: POOL_MIN_ABI, functionName: "token1" }),
+    ]);
+    const token0Symbol = symbolForAddress(token0, assets);
+    const token1Symbol = symbolForAddress(token1, assets);
+    requireIndependentReferencePriceForLp({ token0Symbol, token1Symbol });
+
+    const [decimals0, decimals1] = await Promise.all([
+      publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_KEEPER_ABI, functionName: "assetDecimals", args: [token0] }),
+      publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_KEEPER_ABI, functionName: "assetDecimals", args: [token1] }),
+    ]);
+    return {
+      pool: decision.lpPool,
+      fee: decision.lpFeeTier,
+      tickLower: decision.tickLower,
+      tickUpper: decision.tickUpper,
+      amount0Desired: parseRawAmount(decision.amount0Desired, decimals0),
+      amount1Desired: parseRawAmount(decision.amount1Desired, decimals1),
+      amount0Min: 0n,
+      amount1Min: 0n,
+      tokenId: 0n,
+      liquidity: 0n,
+      deadline,
+    };
+  }
+
+  if (!decision.lpTokenId) {
+    throw new Error(`${decision.action} decision is missing lpTokenId, cannot build an LP leg.`);
+  }
+  const tokenId = BigInt(decision.lpTokenId);
+  const position = await publicClient.readContract({ address: positionManager, abi: POSITION_MANAGER_MIN_ABI, functionName: "positions", args: [tokenId] });
+  const [, , token0, token1, fee, tickLower, tickUpper, currentLiquidity] = position;
+
+  if (decision.action === "LP_INCREASE") {
+    if (!decision.amount0Desired || !decision.amount1Desired) {
+      throw new Error("LP_INCREASE decision is missing amount0Desired/amount1Desired, cannot build an LP leg.");
+    }
+    const token0Symbol = symbolForAddress(token0, assets);
+    const token1Symbol = symbolForAddress(token1, assets);
+    requireIndependentReferencePriceForLp({ token0Symbol, token1Symbol });
+    const [decimals0, decimals1] = await Promise.all([
+      publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_KEEPER_ABI, functionName: "assetDecimals", args: [token0] }),
+      publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_KEEPER_ABI, functionName: "assetDecimals", args: [token1] }),
+    ]);
+    return {
+      pool: ZERO_ADDRESS,
+      fee,
+      tickLower,
+      tickUpper,
+      amount0Desired: parseRawAmount(decision.amount0Desired, decimals0),
+      amount1Desired: parseRawAmount(decision.amount1Desired, decimals1),
+      amount0Min: 0n,
+      amount1Min: 0n,
+      tokenId,
+      liquidity: 0n,
+      deadline,
+    };
+  }
+
+  if (decision.action === "LP_DECREASE") {
+    const fractionBps = BigInt(decision.liquidityFractionBps ?? 0);
+    if (fractionBps <= 0n || fractionBps > 10_000n) {
+      throw new Error(`LP_DECREASE decision has an invalid liquidityFractionBps (${decision.liquidityFractionBps}), must be in (0, 10000].`);
+    }
+    const liquidity = (currentLiquidity * fractionBps) / 10_000n;
+    return { pool: ZERO_ADDRESS, fee, tickLower, tickUpper, amount0Desired: 0n, amount1Desired: 0n, amount0Min: 0n, amount1Min: 0n, tokenId, liquidity, deadline };
+  }
+
+  // LP_COLLECT and LP_CLOSE: no amounts/liquidity to size, MandateVault's
+  // _lpCollect/_lpClose always sweep everything available (tokensOwed for
+  // COLLECT, the position's full current liquidity plus tokensOwed for
+  // CLOSE), see contracts/MandateVault.sol.
+  return { pool: ZERO_ADDRESS, fee, tickLower, tickUpper, amount0Desired: 0n, amount1Desired: 0n, amount0Min: 0n, amount1Min: 0n, tokenId, liquidity: 0n, deadline };
 }
 
 export interface KeeperServiceConfig {
@@ -515,8 +833,33 @@ export class KeeperService implements Executor {
       this.buildPolicyLimitsStructFn(this.config.publicClient, this.config.vaultAddress, policyAddress, this.config.assets),
       this.getMarketDataFn(this.config.stableAssets.map((asset) => ({ asset }))),
     ]);
-    const txHash = await this.submitExecution(decision, vaultState, marketData);
+    const txHash = await this.executeWithLpUnwind(decision, vaultState, marketData);
     return { mode: "live", executedAt: new Date().toISOString(), txHash };
+  }
+
+  /// @notice EMERGENCY_EXIT_TO_STABLE's real entry point: closes any open
+  /// LP position first (closeAllOpenLpPositions), re-reads vaultState fresh
+  /// so the ledger sweep below sees the tokens those closes just returned,
+  /// then runs the existing base-ledger sweep. Every other decision/action
+  /// (including EMERGENCY_EXIT_TO_STABLE on a vault with nothing open,
+  /// v1/v2's own permanent case) is unaffected: falls straight through to
+  /// the original single submitExecution call, zero behavior change.
+  private async executeWithLpUnwind(decision: VaultDecision, vaultState: VaultState, marketData: MarketData): Promise<`0x${string}`> {
+    if (decision.action !== "EMERGENCY_EXIT_TO_STABLE" || vaultState.lpPositions.length === 0) {
+      return this.submitExecution(decision, vaultState, marketData);
+    }
+
+    const closeHashes = await this.closeAllOpenLpPositions(vaultState.lpPositions, marketData);
+    this.alertSink.send(
+      makeEvent(
+        "warning",
+        "EMERGENCY_EXIT_LP_POSITIONS_CLOSED",
+        `EMERGENCY_EXIT_TO_STABLE closed ${closeHashes.length} open LP position(s) before sweeping ledger holdings to stable: ${closeHashes.join(", ")}.`,
+      ),
+    );
+
+    const freshVaultState = await this.getVaultStateFn(this.config.publicClient, this.config.vaultAddress, this.config.assets);
+    return this.submitExecution(decision, freshVaultState, marketData);
   }
 
   /// @notice The real path: called once per confirmed, not-yet-executed
@@ -564,7 +907,7 @@ export class KeeperService implements Executor {
         }
       }
 
-      const txHash = await this.submitExecution(decision, vaultState, marketData);
+      const txHash = await this.executeWithLpUnwind(decision, vaultState, marketData);
       this.config.pipeline.markExecuted(entry.decisionId, txHash);
     } catch (error) {
       // Point 5: never retry in a loop. Log, alert, leave the entry
@@ -573,6 +916,82 @@ export class KeeperService implements Executor {
         makeEvent("critical", "EXECUTION_FAILED", `decisionId ${entry.decisionId}: ${error instanceof Error ? error.message : String(error)}`),
       );
     }
+  }
+
+  /// @notice EMERGENCY_EXIT_TO_STABLE must be a genuinely unconditional
+  /// safety valve, including for value sitting in an open LP position, not
+  /// just simple ledger holdings. Found and fixed 2026-07-14: before this,
+  /// an emergency exit silently left any open LP position untouched (its
+  /// value still exposed to the pool's own manipulable slot0() price)
+  /// because buildSwapLegs/buildLpLeg only ever built a close leg for a
+  /// standalone LP_CLOSE decision, never for EMERGENCY_EXIT_TO_STABLE.
+  ///
+  /// Closes every open position one transaction at a time, each one still
+  /// labeled decision.action = EMERGENCY_EXIT_TO_STABLE (never LP_CLOSE),
+  /// so every single transaction in this sequence keeps benefiting from
+  /// VaultPolicy's unconditional EMERGENCY_EXIT_TO_STABLE bypass
+  /// (VaultPolicy.sol's early return) -- the whole point is that this must
+  /// never depend on any other check (maxTradesPerDay included) staying
+  /// satisfied. contracts/MandateVault.sol's _executeLpLeg treats an
+  /// EMERGENCY_EXIT_TO_STABLE decision carrying a populated lpLeg as an
+  /// implicit close, added specifically to make this possible.
+  ///
+  /// swaps is deliberately [] on every one of these calls: sweeping
+  /// ledger holdings to stable happens exactly once, after every position
+  /// is closed and vaultState has been re-read fresh (see execute/
+  /// processEntry below), never interleaved per-position (a stale
+  /// mid-sequence vaultState snapshot would try to re-sell the same
+  /// holdings more than once and revert on insufficient balance).
+  /// Waits for each receipt sequentially before submitting the next, same
+  /// discipline submitExecution itself already follows.
+  private async closeAllOpenLpPositions(lpPositions: VaultState["lpPositions"], marketData: MarketData): Promise<`0x${string}`[]> {
+    const onchainPrices = await buildOnchainPrices(this.config.publicClient, this.config.vaultAddress, marketData, this.config.assets);
+    const emergencyExitDecision: VaultDecision = {
+      vaultId: this.config.vaultAddress,
+      strategyVersion: this.config.strategyVersion,
+      modelId: "system-emergency-exit-lp-close",
+      action: "EMERGENCY_EXIT_TO_STABLE",
+      confidence: 1,
+      reasoning: "Closing an open LP position as part of an unconditional EMERGENCY_EXIT_TO_STABLE.",
+      proposedAt: new Date().toISOString(),
+    };
+    const onchainDecision = await buildOnchainDecision(emergencyExitDecision, this.config.assets, this.config.publicClient, this.config.vaultAddress);
+
+    const hashes: `0x${string}`[] = [];
+    for (const position of lpPositions) {
+      // buildLpLeg only builds a close-shaped leg for an action it
+      // recognizes as LP_CLOSE; the actual submitted decision.action stays
+      // EMERGENCY_EXIT_TO_STABLE (built above), this synthetic one is only
+      // ever used to shape the leg, never sent onchain itself.
+      const lpLeg = await buildLpLeg(
+        { ...emergencyExitDecision, action: "LP_CLOSE", lpTokenId: position.tokenId },
+        this.config.assets,
+        this.config.publicClient,
+        this.config.vaultAddress,
+      );
+
+      await this.config.publicClient.simulateContract({
+        address: this.config.vaultAddress,
+        abi: MANDATE_VAULT_KEEPER_ABI,
+        functionName: "executeDecision",
+        args: [onchainDecision, onchainPrices, [], lpLeg],
+        account: this.account,
+      });
+      const hash = await this.walletClient.writeContract({
+        address: this.config.vaultAddress,
+        abi: MANDATE_VAULT_KEEPER_ABI,
+        functionName: "executeDecision",
+        args: [onchainDecision, onchainPrices, [], lpLeg],
+        chain: ARC_TESTNET,
+        account: this.account,
+      });
+      const receipt = await this.config.publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error(`EMERGENCY_EXIT_TO_STABLE's close of LP position tokenId ${position.tokenId} (tx ${hash}) reverted onchain.`);
+      }
+      hashes.push(hash);
+    }
+    return hashes;
   }
 
   /// @notice Shared core: builds onchain calldata, simulates (revert check),
@@ -604,13 +1023,14 @@ export class KeeperService implements Executor {
       this.config.poolFeeByAssetSymbol ?? {},
       assetDecimalsBySymbol,
     );
+    const lpLeg = await buildLpLeg(decision, this.config.assets, this.config.publicClient, this.config.vaultAddress);
 
     // Point 3, real half: simulate before ever submitting.
     await this.config.publicClient.simulateContract({
       address: this.config.vaultAddress,
       abi: MANDATE_VAULT_KEEPER_ABI,
       functionName: "executeDecision",
-      args: [onchainDecision, onchainPrices, swaps],
+      args: [onchainDecision, onchainPrices, swaps, lpLeg],
       account: this.account,
     });
 
@@ -620,7 +1040,7 @@ export class KeeperService implements Executor {
       address: this.config.vaultAddress,
       abi: MANDATE_VAULT_KEEPER_ABI,
       functionName: "executeDecision",
-      args: [onchainDecision, onchainPrices, swaps],
+      args: [onchainDecision, onchainPrices, swaps, lpLeg],
       chain: ARC_TESTNET,
       account: this.account,
     });

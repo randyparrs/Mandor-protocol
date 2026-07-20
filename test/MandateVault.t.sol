@@ -42,7 +42,7 @@ contract MandateVaultTest is Test {
 
         address[] memory otherAssets = new address[](1);
         otherAssets[0] = address(eurc);
-        vault = new MandateVault(IERC20(address(usdc)), address(roles), address(router), "Mandate USDC Vault", "mUSDC", otherAssets, address(this));
+        vault = new MandateVault(IERC20(address(usdc)), address(roles), address(router), "Mandate USDC Vault", "mUSDC", otherAssets, address(this), address(0));
 
         address[] memory assets = new address[](2);
         assets[0] = address(usdc);
@@ -66,7 +66,16 @@ contract MandateVaultTest is Test {
                 drawdownSpeedWindowSeconds: 3600,
                 assets: assets,
                 maxAllocationBps: maxBps,
-                stableAssets: stableAssets
+                stableAssets: stableAssets,
+                minLpTickRangeWidth: 0,
+                maxLpPositionValueLossBps: 0,
+                maxLpOutOfRangeSeconds: 0,
+                minLpPoolLiquidityRatioBps: 0,
+                maxLpAllocationBps: 0,
+                lendingReportStaleAfterSeconds: 0,
+                lendingReportMaxDeviationBps: 0,
+                lendingPositionForceUnwindSeconds: 0,
+                maxLendingAllocationBps: 0
             })
         );
         vault.setPolicy(address(policy));
@@ -86,8 +95,44 @@ contract MandateVaultTest is Test {
             action: action,
             asset: address(0),
             amount: 0,
-            targetAllocations: new IVaultPolicy.TargetAllocation[](0)
+            targetAllocations: new IVaultPolicy.TargetAllocation[](0),
+            lpPool: address(0),
+            tickLower: 0,
+            tickUpper: 0,
+            amount0Desired: 0,
+            amount1Desired: 0,
+            amount0Min: 0,
+            amount1Min: 0,
+            lpTokenId: 0,
+            liquidityToRemove: 0,
+            chainId: 0,
+            lendingPositionId: 0
         });
+    }
+
+    /// @dev pool == address(0) means "no LP action this call," same
+    /// convention MandateVault.executeDecision itself uses.
+    function _emptyLpLeg() internal pure returns (MandateVault.LpLeg memory) {
+        return MandateVault.LpLeg({
+            pool: address(0),
+            fee: 0,
+            tickLower: 0,
+            tickUpper: 0,
+            amount0Desired: 0,
+            amount1Desired: 0,
+            amount0Min: 0,
+            amount1Min: 0,
+            tokenId: 0,
+            liquidity: 0,
+            deadline: 0
+        });
+    }
+
+    /// @dev chainId == 0 && positionId == 0 means "no bridge action this
+    /// call," same convention MandateVault.executeDecision itself uses
+    /// (mirrors _emptyLpLeg's own pool == address(0) convention).
+    function _emptyBridgeLeg() internal pure returns (MandateVault.BridgeLeg memory) {
+        return MandateVault.BridgeLeg({chainId: 0, amount: 0, positionId: 0, cctpDestinationDomain: 0, maxFee: 0});
     }
 
     /// @dev A direct, unsolicited token transfer to the vault must never
@@ -182,7 +227,7 @@ contract MandateVaultTest is Test {
         MandateVault.SwapLeg[] memory swaps = new MandateVault.SwapLeg[](0);
 
         vm.expectRevert();
-        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.HOLD), prices, swaps);
+        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.HOLD), prices, swaps, _emptyLpLeg(), _emptyBridgeLeg());
 
         assertEq(vault.ledgerOf(address(usdc)), ledgerBefore);
         assertEq(vault.tradesToday(), tradesBefore);
@@ -198,7 +243,7 @@ contract MandateVaultTest is Test {
         IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](0);
         MandateVault.SwapLeg[] memory swaps = new MandateVault.SwapLeg[](0);
 
-        bool ok = vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.EMERGENCY_EXIT_TO_STABLE), prices, swaps);
+        bool ok = vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.EMERGENCY_EXIT_TO_STABLE), prices, swaps, _emptyLpLeg(), _emptyBridgeLeg());
         assertTrue(ok);
     }
 
@@ -218,7 +263,7 @@ contract MandateVaultTest is Test {
     function testFuzz_payoutAlwaysMovesExactlyTheCurrentConfiguredAmount(uint256 depositAmount, uint256 bountyAmount)
         public
     {
-        bountyAmount = bound(bountyAmount, 1, vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        bountyAmount = bound(bountyAmount, 1, 1000e18);
         // Deposit large enough that 1% of TVL is never the binding
         // constraint, isolating the "no cap involved" case.
         depositAmount = bound(depositAmount, bountyAmount * 100, 1e33);
@@ -239,15 +284,15 @@ contract MandateVaultTest is Test {
     /// percent-of-TVL cap is the one that actually binds on small vaults.
     function testFuzz_payoutCappedByPercentOfTVLOnSmallVaults(uint256 depositAmount) public {
         depositAmount = bound(depositAmount, 1e18, 1e20); // small vault, 1-100 USDC
-        vault.setAutoPauseBountyAmount(vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        vault.setAutoPauseBountyAmount(1000e18);
         _deposit(user1, depositAmount);
 
-        uint256 expectedCap = (depositAmount * vault.MAX_AUTO_PAUSE_BOUNTY_BPS()) / 10_000;
+        uint256 expectedCap = (depositAmount * 100) / 10_000;
         vm.prank(address(policy));
         vault.payAutoPauseBounty(user1);
 
         assertEq(usdc.balanceOf(user1), expectedCap, "payout must be capped at 1% of current TVL, not the full configured amount");
-        assertLt(usdc.balanceOf(user1), vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE(), "sanity: the percent cap must be the binding one here");
+        assertLt(usdc.balanceOf(user1), 1000e18, "sanity: the percent cap must be the binding one here");
     }
 
     /// @dev On a very large vault, 1% of TVL would exceed the absolute
@@ -257,22 +302,22 @@ contract MandateVaultTest is Test {
     /// large the vault or the configured amount.
     function testFuzz_payoutCappedByAbsoluteMaximumOnLargeVaults(uint256 depositAmount) public {
         depositAmount = bound(depositAmount, 1_000_000e18, 1e33); // large vault
-        vm.assume((depositAmount * vault.MAX_AUTO_PAUSE_BOUNTY_BPS()) / 10_000 > vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        vm.assume((depositAmount * 100) / 10_000 > 1000e18);
 
-        vault.setAutoPauseBountyAmount(vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        vault.setAutoPauseBountyAmount(1000e18);
         _deposit(user1, depositAmount);
 
         vm.prank(address(policy));
         vault.payAutoPauseBounty(user1);
 
-        assertEq(usdc.balanceOf(user1), vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE());
+        assertEq(usdc.balanceOf(user1), 1000e18);
     }
 
     function test_setAutoPauseBountyAmountRejectsAboveAbsoluteCap() public {
         // Computed before arming expectRevert, otherwise this view call
         // itself (evaluated first, to build the argument below) is the one
         // "next call" gets attached to, not the actual setter call.
-        uint256 tooMuch = vault.MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE() + 1;
+        uint256 tooMuch = 1000e18 + 1;
         vm.expectRevert();
         vault.setAutoPauseBountyAmount(tooMuch);
     }
@@ -317,11 +362,11 @@ contract MandateVaultTest is Test {
 
         IVaultPolicy.AssetPrice[] memory prices = new IVaultPolicy.AssetPrice[](0);
         MandateVault.SwapLeg[] memory swaps = new MandateVault.SwapLeg[](0);
-        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.REBALANCE), prices, swaps);
+        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.REBALANCE), prices, swaps, _emptyLpLeg(), _emptyBridgeLeg());
         assertEq(vault.tradesToday(), 1);
 
         vm.warp(block.timestamp + warpSeconds);
-        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.REBALANCE), prices, swaps);
+        vault.executeDecision(_emptyDecision(IVaultPolicy.DecisionAction.REBALANCE), prices, swaps, _emptyLpLeg(), _emptyBridgeLeg());
         assertEq(vault.tradesToday(), 1, "tradesToday must reset across the day boundary");
     }
 
@@ -338,7 +383,7 @@ contract MandateVaultTest is Test {
     /// timelock, execution must revert.
     function testFuzz_routerChangeNeverExecutesBeforeTimelockElapses(address candidateRouter, uint256 elapsed) public {
         vm.assume(candidateRouter != address(router));
-        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() - 1);
+        elapsed = bound(elapsed, 0, 48 hours - 1);
 
         vault.proposeRouterAllowed(candidateRouter, true);
         assertFalse(vault.allowedRouters(candidateRouter));
@@ -358,7 +403,7 @@ contract MandateVaultTest is Test {
         vm.assume(executor != address(0));
 
         vault.proposeRouterAllowed(candidateRouter, true);
-        vm.warp(block.timestamp + vault.ROUTER_CHANGE_TIMELOCK() + 1);
+        vm.warp(block.timestamp + 48 hours + 1);
 
         vm.prank(executor);
         vault.executeRouterAllowed(candidateRouter);
@@ -368,7 +413,7 @@ contract MandateVaultTest is Test {
     /// @dev Removing a router (not just adding one) also goes through the
     /// same timelock, not just additions.
     function testFuzz_routerRemovalAlsoTimelocked(uint256 elapsed) public {
-        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() - 1);
+        elapsed = bound(elapsed, 0, 48 hours - 1);
         assertTrue(vault.allowedRouters(address(router)), "sanity: the initial router starts allowed");
 
         vault.proposeRouterAllowed(address(router), false);
@@ -386,7 +431,7 @@ contract MandateVaultTest is Test {
     /// delayed further.
     function testFuzz_pauserCanCancelPendingRouterChangeAtAnyPointBeforeExecution(address candidateRouter, uint256 elapsed) public {
         vm.assume(candidateRouter != address(router));
-        elapsed = bound(elapsed, 0, vault.ROUTER_CHANGE_TIMELOCK() * 10);
+        elapsed = bound(elapsed, 0, 48 hours * 10);
 
         vault.proposeRouterAllowed(candidateRouter, true);
         vm.warp(block.timestamp + elapsed);
@@ -449,7 +494,7 @@ contract MandateVaultTest is Test {
 
         uint256 ledgerBefore = vault.ledgerOf(address(usdc));
         vault.proposeSweepDust(address(usdc), to);
-        vm.warp(block.timestamp + vault.SWEEP_DUST_TIMELOCK() + 1);
+        vm.warp(block.timestamp + 48 hours + 1);
         vault.executeSweepDust(address(usdc));
 
         assertEq(vault.ledgerOf(address(usdc)), ledgerBefore, "sweepDust must never touch the ledger itself");
@@ -472,7 +517,7 @@ contract MandateVaultTest is Test {
     /// same 48h convention already used for router allowlist changes.
     function testFuzz_sweepDustNeverExecutesBeforeTimelockElapses(uint256 dustAmount, uint256 elapsed) public {
         dustAmount = bound(dustAmount, 1, 1e30);
-        elapsed = bound(elapsed, 0, vault.SWEEP_DUST_TIMELOCK() - 1);
+        elapsed = bound(elapsed, 0, 48 hours - 1);
         usdc.mint(address(vault), dustAmount);
 
         vault.proposeSweepDust(address(usdc), address(this));
@@ -490,7 +535,7 @@ contract MandateVaultTest is Test {
         usdc.mint(address(vault), dustAmount);
 
         vault.proposeSweepDust(address(usdc), address(this));
-        vm.warp(block.timestamp + vault.SWEEP_DUST_TIMELOCK() + 1);
+        vm.warp(block.timestamp + 48 hours + 1);
 
         vm.prank(executor);
         vault.executeSweepDust(address(usdc));
@@ -503,7 +548,7 @@ contract MandateVaultTest is Test {
     /// swept away, not just watch it count down.
     function testFuzz_pauserCanCancelPendingSweepAtAnyPointBeforeExecution(uint256 dustAmount, uint256 elapsed) public {
         dustAmount = bound(dustAmount, 1, 1e30);
-        elapsed = bound(elapsed, 0, vault.SWEEP_DUST_TIMELOCK() * 10);
+        elapsed = bound(elapsed, 0, 48 hours * 10);
         usdc.mint(address(vault), dustAmount);
 
         vault.proposeSweepDust(address(usdc), address(this));

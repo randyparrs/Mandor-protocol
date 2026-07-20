@@ -28,6 +28,15 @@ function defaultLimits(overrides: Record<string, unknown> = {}) {
     assets: [USDC, EURC],
     maxAllocationBps: [10000n, 5000n],
     stableAssets: [USDC],
+    minLpTickRangeWidth: 0,
+    maxLpPositionValueLossBps: 0n,
+    maxLpOutOfRangeSeconds: 0n,
+    minLpPoolLiquidityRatioBps: 0n,
+    maxLpAllocationBps: 0n,
+    lendingReportStaleAfterSeconds: 0n,
+    lendingReportMaxDeviationBps: 0n,
+    lendingPositionForceUnwindSeconds: 0n,
+    maxLendingAllocationBps: 0n,
     ...overrides,
   };
 }
@@ -45,8 +54,29 @@ const REBALANCE = 1;
 const ENTER = 2;
 const EMERGENCY_EXIT_TO_STABLE = 4;
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
 function decision(action: number, overrides: Record<string, unknown> = {}) {
-  return { action, asset: USDC, amount: 0n, targetAllocations: [], ...overrides };
+  return {
+    action,
+    asset: USDC,
+    amount: 0n,
+    targetAllocations: [],
+    lpPool: ZERO_ADDRESS,
+    tickLower: 0,
+    tickUpper: 0,
+    amount0Desired: 0n,
+    amount1Desired: 0n,
+    amount0Min: 0n,
+    amount1Min: 0n,
+    lpTokenId: 0n,
+    liquidityToRemove: 0n,
+    // v4 only, zero here (no cross-chain lending action for this
+    // v1/v2/v3-shaped fixture).
+    chainId: 0n,
+    lendingPositionId: 0n,
+    ...overrides,
+  };
 }
 
 async function setup() {
@@ -80,7 +110,9 @@ describe("VaultPolicy", () => {
       tradesToday: 0n,
       currentHoldings: [holding(USDC, 6000), holding(EURC, 4000)],
       prices: [freshPrice(100n, 101n, ts)],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [passed, codes] = await policy.read.validateDecision([decision(REBALANCE), state]);
     assert.equal(passed, true);
     assert.equal(codes.length, 0);
@@ -95,7 +127,9 @@ describe("VaultPolicy", () => {
       // EURC capped at 5000 bps in defaultLimits; 6000 violates it.
       currentHoldings: [holding(USDC, 4000), holding(EURC, 6000)],
       prices: [],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [passed, codes] = await policy.read.validateDecision([decision(REBALANCE), state]);
     assert.equal(passed, false);
     assert.ok(codes.map(bytes32ToCode).includes("MAX_ALLOCATION_EXCEEDED"));
@@ -110,7 +144,9 @@ describe("VaultPolicy", () => {
       // USDC (the only stable asset) at 1000 bps, below the 2000 bps minimum.
       currentHoldings: [holding(USDC, 1000), holding(EURC, 9000)],
       prices: [],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [passed, codes] = await policy.read.validateDecision([decision(REBALANCE), state]);
     assert.equal(passed, false);
     assert.ok(codes.map(bytes32ToCode).includes("MIN_STABLE_ALLOCATION_VIOLATED"));
@@ -124,7 +160,9 @@ describe("VaultPolicy", () => {
       tradesToday: 0n,
       currentHoldings: [],
       prices: [],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [passed, codes] = await policy.read.validateDecision([decision(HOLD), state]);
     assert.equal(passed, false);
     assert.ok(codes.map(bytes32ToCode).includes("MAX_DRAWDOWN_EXCEEDED"));
@@ -140,7 +178,9 @@ describe("VaultPolicy", () => {
       // between the two actions below.
       currentHoldings: [holding(USDC, 10000)],
       prices: [],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [tradePassed] = await policy.read.validateDecision([decision(ENTER, { amount: 1n }), state]);
     assert.equal(tradePassed, false);
 
@@ -158,7 +198,9 @@ describe("VaultPolicy", () => {
       tradesToday: 0n,
       currentHoldings: [],
       prices: [freshPrice(100n, 100n, ts - BigInt(HOUR * 2))],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [stalePassed, staleCodes] = await policy.read.validateDecision([decision(HOLD), staleState]);
     assert.equal(stalePassed, false);
     assert.ok(staleCodes.map(bytes32ToCode).includes("ORACLE_STALE"));
@@ -170,7 +212,9 @@ describe("VaultPolicy", () => {
       currentHoldings: [],
       // 20% deviation, exceeds oracleMaxDeviationBps = 5%
       prices: [freshPrice(120n, 100n, ts)],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
     const [deviatedPassed, deviatedCodes] = await policy.read.validateDecision([decision(HOLD), deviatedState]);
     assert.equal(deviatedPassed, false);
     assert.ok(deviatedCodes.map(bytes32ToCode).includes("ORACLE_DEVIATION_EXCEEDED"));
@@ -186,7 +230,9 @@ describe("VaultPolicy", () => {
       tradesToday: 999n,
       currentHoldings: [],
       prices: [],
-    };
+    currentLpPositions: [],
+    currentLendingPositions: [],
+  };
 
     const [holdPassed, holdCodes] = await policy.read.validateDecision([decision(HOLD), state]);
     assert.equal(holdPassed, false);
@@ -215,7 +261,9 @@ describe("VaultPolicy", () => {
         tradesToday: 0n,
         currentHoldings: [],
         prices: [freshPrice(100n, 101n, ts)],
-      };
+        currentLpPositions: [],
+        currentLendingPositions: [],
+    };
       const { result } = await policy.simulate.checkAndAutoPause([state]);
       assert.equal(result[0], false);
       assert.equal(await policy.read.paused(), false);
@@ -229,7 +277,9 @@ describe("VaultPolicy", () => {
         tradesToday: 0n,
         currentHoldings: [],
         prices: [],
-      };
+        currentLpPositions: [],
+        currentLendingPositions: [],
+    };
       await policy.write.checkAndAutoPause([state], { account: other.account });
       assert.equal(await policy.read.paused(), true);
       assert.equal(await mockVault.read.payoutCallCount(), 1n);
@@ -245,7 +295,9 @@ describe("VaultPolicy", () => {
         tradesToday: 0n,
         currentHoldings: [],
         prices: [],
-      };
+        currentLpPositions: [],
+        currentLendingPositions: [],
+    };
       const hash = await policy.write.checkAndAutoPause([state], { account: other.account });
       const receipt = await pub.getTransactionReceipt({ hash });
       assert.equal(receipt.status, "success", "the outer transaction must not revert");
@@ -268,7 +320,9 @@ describe("VaultPolicy", () => {
         tradesToday: 0n,
         currentHoldings: [],
         prices: [],
-      };
+        currentLpPositions: [],
+        currentLendingPositions: [],
+    };
       await policy.write.checkAndAutoPause([state], { account: other.account });
       await assert.rejects(policy.write.checkAndAutoPause([state], { account: other.account }));
     });
@@ -281,7 +335,9 @@ describe("VaultPolicy", () => {
         tradesToday: 0n,
         currentHoldings: [],
         prices: [],
-      };
+        currentLpPositions: [],
+        currentLendingPositions: [],
+    };
       const [triggered, code] = await policy.read.previewAutoPause([state]);
       assert.equal(triggered, true);
       assert.equal(await policy.read.paused(), false, "preview must not mutate state");

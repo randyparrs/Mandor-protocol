@@ -20,6 +20,19 @@ const VAULT_POLICY_LIMITS_ABI = [
   { type: "function", name: "drawdownSpeedWindowSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "maxAllocationBpsPerAsset", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "isStableAsset", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
+  // v3 only, zero for v1/v2 (ConstructorLimits was never given real
+  // values for these), harmless to always read.
+  { type: "function", name: "minLpTickRangeWidth", stateMutability: "view", inputs: [], outputs: [{ type: "int24" }] },
+  { type: "function", name: "maxLpPositionValueLossBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxLpOutOfRangeSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "minLpPoolLiquidityRatioBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxLpAllocationBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  // v4 only, zero for v1/v2/v3 (ConstructorLimits was never given real
+  // values for these), harmless to always read.
+  { type: "function", name: "lendingReportStaleAfterSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "lendingReportMaxDeviationBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "lendingPositionForceUnwindSeconds", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxLendingAllocationBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
 ] as const;
 
 /// @notice Built from VaultPolicy's own immutable limits, read live, never
@@ -31,16 +44,31 @@ export async function buildPolicyLimitsText(publicClient: PublicClient, policyAd
   const read = <T>(functionName: (typeof VAULT_POLICY_LIMITS_ABI)[number]["name"], args: readonly unknown[] = []) =>
     publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_LIMITS_ABI, functionName, args } as Parameters<typeof publicClient.readContract>[0]) as Promise<T>;
 
-  const [maxDrawdownBps, maxTradesPerDay, minStableAllocationBps, oracleMaxStalenessSeconds, oracleMaxDeviationBps, maxDrawdownSpeedBpsPerWindow, drawdownSpeedWindowSeconds] =
-    await Promise.all([
-      read<bigint>("maxDrawdownBps"),
-      read<bigint>("maxTradesPerDay"),
-      read<bigint>("minStableAllocationBps"),
-      read<bigint>("oracleMaxStalenessSeconds"),
-      read<bigint>("oracleMaxDeviationBps"),
-      read<bigint>("maxDrawdownSpeedBpsPerWindow"),
-      read<bigint>("drawdownSpeedWindowSeconds"),
-    ]);
+  const [
+    maxDrawdownBps,
+    maxTradesPerDay,
+    minStableAllocationBps,
+    oracleMaxStalenessSeconds,
+    oracleMaxDeviationBps,
+    maxDrawdownSpeedBpsPerWindow,
+    drawdownSpeedWindowSeconds,
+    lendingReportStaleAfterSeconds,
+    lendingReportMaxDeviationBps,
+    lendingPositionForceUnwindSeconds,
+    maxLendingAllocationBps,
+  ] = await Promise.all([
+    read<bigint>("maxDrawdownBps"),
+    read<bigint>("maxTradesPerDay"),
+    read<bigint>("minStableAllocationBps"),
+    read<bigint>("oracleMaxStalenessSeconds"),
+    read<bigint>("oracleMaxDeviationBps"),
+    read<bigint>("maxDrawdownSpeedBpsPerWindow"),
+    read<bigint>("drawdownSpeedWindowSeconds"),
+    read<bigint>("lendingReportStaleAfterSeconds"),
+    read<bigint>("lendingReportMaxDeviationBps"),
+    read<bigint>("lendingPositionForceUnwindSeconds"),
+    read<bigint>("maxLendingAllocationBps"),
+  ]);
 
   const perAsset = await Promise.all(
     assets.map(async (asset) => {
@@ -60,6 +88,10 @@ export async function buildPolicyLimitsText(publicClient: PublicClient, policyAd
     `oracleMaxDeviationBps: ${oracleMaxDeviationBps}`,
     `maxDrawdownSpeedBpsPerWindow: ${maxDrawdownSpeedBpsPerWindow}`,
     `drawdownSpeedWindowSeconds: ${drawdownSpeedWindowSeconds}`,
+    `lendingReportStaleAfterSeconds: ${lendingReportStaleAfterSeconds}`,
+    `lendingReportMaxDeviationBps: ${lendingReportMaxDeviationBps}`,
+    `lendingPositionForceUnwindSeconds: ${lendingPositionForceUnwindSeconds}`,
+    `maxLendingAllocationBps: ${maxLendingAllocationBps}`,
     ...perAsset,
   ].join("\n");
 }
@@ -81,17 +113,43 @@ export async function buildPolicyLimitsStruct(
   const read = <T>(functionName: (typeof VAULT_POLICY_LIMITS_ABI)[number]["name"], args: readonly unknown[] = []) =>
     publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_LIMITS_ABI, functionName, args } as Parameters<typeof publicClient.readContract>[0]) as Promise<T>;
 
-  const [maxDrawdownBps, maxTradesPerDay, minStableAllocationBps, oracleMaxStalenessSeconds, oracleMaxDeviationBps, maxDrawdownSpeedBpsPerWindow, drawdownSpeedWindowSeconds, autoPauseBountyAmount] =
-    await Promise.all([
-      read<bigint>("maxDrawdownBps"),
-      read<bigint>("maxTradesPerDay"),
-      read<bigint>("minStableAllocationBps"),
-      read<bigint>("oracleMaxStalenessSeconds"),
-      read<bigint>("oracleMaxDeviationBps"),
-      read<bigint>("maxDrawdownSpeedBpsPerWindow"),
-      read<bigint>("drawdownSpeedWindowSeconds"),
-      publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_POLICY_GETTER_ABI, functionName: "autoPauseBountyAmount" }),
-    ]);
+  const [
+    maxDrawdownBps,
+    maxTradesPerDay,
+    minStableAllocationBps,
+    oracleMaxStalenessSeconds,
+    oracleMaxDeviationBps,
+    maxDrawdownSpeedBpsPerWindow,
+    drawdownSpeedWindowSeconds,
+    autoPauseBountyAmount,
+    minLpTickRangeWidth,
+    maxLpPositionValueLossBps,
+    maxLpOutOfRangeSeconds,
+    minLpPoolLiquidityRatioBps,
+    maxLpAllocationBps,
+    lendingReportStaleAfterSeconds,
+    lendingReportMaxDeviationBps,
+    lendingPositionForceUnwindSeconds,
+    maxLendingAllocationBps,
+  ] = await Promise.all([
+    read<bigint>("maxDrawdownBps"),
+    read<bigint>("maxTradesPerDay"),
+    read<bigint>("minStableAllocationBps"),
+    read<bigint>("oracleMaxStalenessSeconds"),
+    read<bigint>("oracleMaxDeviationBps"),
+    read<bigint>("maxDrawdownSpeedBpsPerWindow"),
+    read<bigint>("drawdownSpeedWindowSeconds"),
+    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_POLICY_GETTER_ABI, functionName: "autoPauseBountyAmount" }),
+    read<number>("minLpTickRangeWidth"),
+    read<bigint>("maxLpPositionValueLossBps"),
+    read<bigint>("maxLpOutOfRangeSeconds"),
+    read<bigint>("minLpPoolLiquidityRatioBps"),
+    read<bigint>("maxLpAllocationBps"),
+    read<bigint>("lendingReportStaleAfterSeconds"),
+    read<bigint>("lendingReportMaxDeviationBps"),
+    read<bigint>("lendingPositionForceUnwindSeconds"),
+    read<bigint>("maxLendingAllocationBps"),
+  ]);
 
   const maxAllocationBpsPerAsset: Record<AssetSymbol, number> = {};
   const isStableAsset: Record<AssetSymbol, boolean> = {};
@@ -117,6 +175,15 @@ export async function buildPolicyLimitsStruct(
     maxDrawdownSpeedBpsPerWindow: Number(maxDrawdownSpeedBpsPerWindow),
     drawdownSpeedWindowSeconds: Number(drawdownSpeedWindowSeconds),
     autoPauseBountyAmount: autoPauseBountyAmount.toString(),
+    minLpTickRangeWidth: Number(minLpTickRangeWidth),
+    maxLpPositionValueLossBps: Number(maxLpPositionValueLossBps),
+    maxLpOutOfRangeSeconds: Number(maxLpOutOfRangeSeconds),
+    minLpPoolLiquidityRatioBps: Number(minLpPoolLiquidityRatioBps),
+    maxLpAllocationBps: Number(maxLpAllocationBps),
+    lendingReportStaleAfterSeconds: Number(lendingReportStaleAfterSeconds),
+    lendingReportMaxDeviationBps: Number(lendingReportMaxDeviationBps),
+    lendingPositionForceUnwindSeconds: Number(lendingPositionForceUnwindSeconds),
+    maxLendingAllocationBps: Number(maxLendingAllocationBps),
   };
 }
 

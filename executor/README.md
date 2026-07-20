@@ -186,6 +186,50 @@ real signer, a real Anthropic API call, or a live chain. A real end-to-end
 run against the live vault is
 `scripts/testKeeperServiceAgainstRealVault.ts` instead.
 
+## v3's LP mechanism (`buildLpLeg`, `requireIndependentReferencePriceForLp`)
+
+Alongside `buildSwapLegs`, `keeperService.ts` has an LP-position
+counterpart, `buildLpLeg`, for `LP_OPEN`/`LP_INCREASE`/`LP_DECREASE`/
+`LP_COLLECT`/`LP_CLOSE`. `requireIndependentReferencePriceForLp` is the
+exact same hard block as `requireIndependentReferencePriceToBuy` above,
+extended to opening/increasing a position: refuses before ever building a
+leg if either token in the pool lacks an independent reference price.
+Today this blocks real `LP_OPEN`/`LP_INCREASE` entirely (both of this
+project's real-liquidity pools involve cirBTC), same disclosed situation
+as v2's cirBTC `ENTER` restriction. `LP_DECREASE`/`LP_COLLECT`/`LP_CLOSE`
+are never gated by this, reducing exposure is always allowed.
+
+**`EMERGENCY_EXIT_TO_STABLE` covers open LP positions too, not just
+ledger holdings**, `executeWithLpUnwind`/`closeAllOpenLpPositions`: before
+sweeping simple holdings to stable, every currently-open LP position gets
+closed first, each as its own `executeDecision` call with
+`decision.action` kept as `EMERGENCY_EXIT_TO_STABLE` throughout (never
+`LP_CLOSE`), so every single transaction in the sequence keeps the
+unconditional `VaultPolicy` bypass this safety valve depends on. Found
+and fixed 2026-07-14: before this, the base contract's own LP-leg dispatch
+gate had a latent bug (checked `lpLeg.pool != address(0)`, but every
+non-`LP_OPEN` leg sets `pool == address(0)` by convention, identity comes
+from `tokenId` instead) that made the entire post-open LP lifecycle,
+including this safety-valve path, silently unreachable. See
+`docs/deployments.md`'s v3 section for the full writeup and the fork/unit
+tests that prove it now.
+
+**LP position valuation uses a TWAP, not the live spot price.** Unlike a
+simple ERC-20 holding (valued from `lastKnownPriceUSDC`, cached only from
+the keeper's own last executed decision), `totalAssets()` is read live
+and fully permissionlessly by `deposit()`/`withdraw()`/`mint()`/`redeem()`
+(standard, un-overridden ERC-4626), in the same transaction as any
+caller's own call, so valuing an open LP position from the pool's live
+`slot0()` would have let a single-block spot-price manipulation extract
+value from other depositors. `requireIndependentReferencePriceForLp`
+above does not protect this: it only gates the keeper's own
+`LP_OPEN`/`LP_INCREASE` proposals, `deposit`/`withdraw` never go through
+the keeper at all. Found and fixed 2026-07-15, before any real deposit
+could ever reach a vault holding an open position; see
+`docs/deployments.md`'s v3 section for the full writeup and the real fork
+test proving `totalAssets()` resists a same-block manipulation that moves
+the pool's own spot price by a large amount.
+
 ## Must never do
 
 - Never custody vault assets, even transiently. Swaps execute atomically

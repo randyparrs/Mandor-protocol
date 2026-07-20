@@ -102,6 +102,60 @@ facts.
       real (`eth_getCode` + a real `latestRoundData()` call) before trusting
       it, same standard as everything else in this file.
 
+- [x] **Pyth Network does have a real, live contract on Arc Testnet with a
+      genuine BTC/USD feed, but it cannot serve as cirBTC's independent
+      reference price -- not because of deployment status like Chainlink
+      above, but because testnet cirBTC itself has no real value to
+      reference.** Checked live 2026-07-19: Pyth's own official contract
+      address list (docs.pyth.network/price-feeds/core/contract-addresses/evm)
+      lists "Arc Network Testnet" at `0x2880aB155794e7179c9eE2e38200202908C17B43`
+      (an ERC1967 proxy, real bytecode confirmed via `eth_getCode` at both
+      the proxy and its implementation at `0xa2aa501b19aff244d90cc15a4cf739d2725b5729`).
+      `priceFeedExists()` returned `true` for the real BTC/USD feed id
+      (`0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43`,
+      from Pyth's own Hermes API), and `getPriceUnsafe()` returned a fresh,
+      plausible real price (~$64,600-$64,700 across several live reads).
+      Pyth's contract itself is real, this is not the same situation as
+      Chainlink's total absence.
+
+      The reason this still cannot be used: Circle's own official docs
+      (developers.circle.com/assets/cirbtc-contract-addresses) state, for
+      the exact Arc Testnet cirBTC address this project uses
+      (`0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF`, confirmed matching):
+      "Testnet tokens have no financial value... the cirBTC tokens in
+      circulation on these networks have no financial value, and are not
+      backed by real Bitcoin." This is explicitly different from cirBTC on
+      Ethereum mainnet, which Circle's own blog describes as genuinely
+      "1:1 backed by native BTC, custodied at a regulated Circle entity."
+      Testnet cirBTC is a free, unbacked test token with no redemption
+      arbitrage mechanism tying its price to real BTC at all.
+
+      Confirmed empirically, not just from the docs: using this project's
+      own `getVolatileAssetPriceUSDC` against the real WUSDC/cirBTC pool,
+      cirBTC's live pool-implied price was **$597,092.63**, against a
+      simultaneous real Pyth BTC/USD read of **$64,721.15** -- a **9.23x
+      (~823%) deviation**, not a small tracking error. This is consistent
+      with the pool's own known thin, arbitrarily-seeded reserves
+      (~440 WUSDC / ~0.00077 cirBTC) having no economic force keeping it
+      anchored to real BTC.
+
+      Consequence: wiring Pyth's real BTC/USD price in as cirBTC's
+      `referencePriceUSDC` (a `PYTH_REFERENCE_CONFIG` entry was designed but
+      explicitly NOT implemented after this finding) would not have
+      unblocked anything -- `oracleMaxDeviationBps` (500bps/5% tolerance)
+      would fail permanently against an ~823% real gap, just replacing one
+      honest, disclosed block (`INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY`)
+      with a different one, while creating a false impression that a real,
+      meaningful independent-price check was running. v2/v3/v4/v5 remain
+      blocked for cirBTC exactly as before this investigation. Do not
+      revisit this path for TESTNET cirBTC without this context. Pyth's
+      real Arc deployment may still be the right answer the day either (a)
+      Arc mainnet is used with genuinely-backed cirBTC, or (b) a testnet
+      cirBTC with a real peg mechanism exists -- re-verify both the oracle
+      and cirBTC's own backing status live again at that point, same
+      standard as everything else in this file, don't assume either has
+      changed.
+
 ## Blocking, must be resolved before Phase 2 is considered fully closed
 
 - [ ] **Blocklisted-address transfer behavior, not yet verified.** Confirm
