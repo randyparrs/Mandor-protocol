@@ -66,7 +66,7 @@ function buildLineChartSvg(opts: {
   <text x="${padding.left - 8}" y="${(yy + 4).toFixed(1)}" font-size="10" text-anchor="end" font-family="sans-serif" fill="#666">${v.toFixed(0)}</text>`;
   }).join("\n  ");
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
   <rect width="${width}" height="${height}" fill="#ffffff" />
   <text x="${padding.left}" y="20" font-size="15" font-weight="bold" fill="#111">${opts.title}</text>
   ${legend}
