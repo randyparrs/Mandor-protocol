@@ -30,9 +30,9 @@ function buildLineChartSvg(opts: {
   width?: number;
   height?: number;
 }): string {
-  const width = opts.width ?? 900;
-  const height = opts.height ?? 400;
-  const padding = { top: 65, right: 30, bottom: 40, left: 70 };
+  const width = opts.width ?? 1800;
+  const height = opts.height ?? 800;
+  const padding = { top: 110, right: 60, bottom: 70, left: 120 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
@@ -47,14 +47,14 @@ function buildLineChartSvg(opts: {
   const paths = opts.series
     .map((s) => {
       const d = s.values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-      return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" />`;
+      return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="3" />`;
     })
     .join("\n  ");
 
   const legend = opts.series
     .map(
       (s, idx) =>
-        `<circle cx="${padding.left + idx * 180}" cy="${46}" r="5" fill="${s.color}" /><text x="${padding.left + idx * 180 + 12}" y="50" font-size="12" font-family="sans-serif" fill="#333">${s.label}</text>`,
+        `<circle cx="${padding.left + idx * 320}" cy="${80}" r="9" fill="${s.color}" /><text x="${padding.left + idx * 320 + 20}" y="87" font-size="22" font-family="sans-serif" fill="#333">${s.label}</text>`,
     )
     .join("\n  ");
 
@@ -63,12 +63,12 @@ function buildLineChartSvg(opts: {
     const v = minV + ((maxV - minV) * i) / gridLines;
     const yy = y(v);
     return `<line x1="${padding.left}" y1="${yy.toFixed(1)}" x2="${width - padding.right}" y2="${yy.toFixed(1)}" stroke="#eee" stroke-width="1" />
-  <text x="${padding.left - 8}" y="${(yy + 4).toFixed(1)}" font-size="10" text-anchor="end" font-family="sans-serif" fill="#666">${v.toFixed(0)}</text>`;
+  <text x="${padding.left - 14}" y="${(yy + 7).toFixed(1)}" font-size="18" text-anchor="end" font-family="sans-serif" fill="#666">${v.toFixed(0)}</text>`;
   }).join("\n  ");
 
-  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
   <rect width="${width}" height="${height}" fill="#ffffff" />
-  <text x="${padding.left}" y="20" font-size="15" font-weight="bold" fill="#111">${opts.title}</text>
+  <text x="${padding.left}" y="36" font-size="28" font-weight="bold" fill="#111">${opts.title}</text>
   ${legend}
   ${gridAndLabels}
   ${paths}
