@@ -1,9 +1,25 @@
 import type { PublicClient } from "viem";
-import type { AssetSymbol } from "./types.js";
+import type { AssetSymbol, AssetPriceInput } from "./types.js";
 import type { PolicyLimits } from "../../shared/policyTypes.js";
 import type { ProposeDecisionInput } from "./loop.js";
 import { getVaultState, type KnownAsset } from "./tools/getVaultState.js";
 import { getMarketData, getVolatileAssetPriceUSDC } from "./tools/getMarketData.js";
+
+// The real, public Arc Testnet RPC rejects a burst of simultaneous
+// eth_call requests ("request limit reached"), confirmed live 2026-07-20
+// while wiring v5's own scheduled decision cycle: buildPolicyLimitsText/
+// buildPolicyLimitsStruct below both read every VaultPolicy limit via a
+// single Promise.all, 11-17 requests fired at once depending on version.
+// This affects every vault version's real, scheduled decision cycle
+// equally (the ABI/field list is shared across v1-v5), not just v5 --
+// fixed here by reading sequentially with a small pace between calls,
+// same RPC_PACING_MS discipline already used in the deploy/bootstrap
+// scripts, rather than adding retry logic to paper over a real
+// concurrency limit.
+const RPC_PACING_MS = 3000;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const MANDATE_VAULT_POLICY_GETTER_ABI = [
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -44,41 +60,37 @@ export async function buildPolicyLimitsText(publicClient: PublicClient, policyAd
   const read = <T>(functionName: (typeof VAULT_POLICY_LIMITS_ABI)[number]["name"], args: readonly unknown[] = []) =>
     publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_LIMITS_ABI, functionName, args } as Parameters<typeof publicClient.readContract>[0]) as Promise<T>;
 
-  const [
-    maxDrawdownBps,
-    maxTradesPerDay,
-    minStableAllocationBps,
-    oracleMaxStalenessSeconds,
-    oracleMaxDeviationBps,
-    maxDrawdownSpeedBpsPerWindow,
-    drawdownSpeedWindowSeconds,
-    lendingReportStaleAfterSeconds,
-    lendingReportMaxDeviationBps,
-    lendingPositionForceUnwindSeconds,
-    maxLendingAllocationBps,
-  ] = await Promise.all([
-    read<bigint>("maxDrawdownBps"),
-    read<bigint>("maxTradesPerDay"),
-    read<bigint>("minStableAllocationBps"),
-    read<bigint>("oracleMaxStalenessSeconds"),
-    read<bigint>("oracleMaxDeviationBps"),
-    read<bigint>("maxDrawdownSpeedBpsPerWindow"),
-    read<bigint>("drawdownSpeedWindowSeconds"),
-    read<bigint>("lendingReportStaleAfterSeconds"),
-    read<bigint>("lendingReportMaxDeviationBps"),
-    read<bigint>("lendingPositionForceUnwindSeconds"),
-    read<bigint>("maxLendingAllocationBps"),
-  ]);
+  const maxDrawdownBps = await read<bigint>("maxDrawdownBps");
+  await sleep(RPC_PACING_MS);
+  const maxTradesPerDay = await read<bigint>("maxTradesPerDay");
+  await sleep(RPC_PACING_MS);
+  const minStableAllocationBps = await read<bigint>("minStableAllocationBps");
+  await sleep(RPC_PACING_MS);
+  const oracleMaxStalenessSeconds = await read<bigint>("oracleMaxStalenessSeconds");
+  await sleep(RPC_PACING_MS);
+  const oracleMaxDeviationBps = await read<bigint>("oracleMaxDeviationBps");
+  await sleep(RPC_PACING_MS);
+  const maxDrawdownSpeedBpsPerWindow = await read<bigint>("maxDrawdownSpeedBpsPerWindow");
+  await sleep(RPC_PACING_MS);
+  const drawdownSpeedWindowSeconds = await read<bigint>("drawdownSpeedWindowSeconds");
+  await sleep(RPC_PACING_MS);
+  const lendingReportStaleAfterSeconds = await read<bigint>("lendingReportStaleAfterSeconds");
+  await sleep(RPC_PACING_MS);
+  const lendingReportMaxDeviationBps = await read<bigint>("lendingReportMaxDeviationBps");
+  await sleep(RPC_PACING_MS);
+  const lendingPositionForceUnwindSeconds = await read<bigint>("lendingPositionForceUnwindSeconds");
+  await sleep(RPC_PACING_MS);
+  const maxLendingAllocationBps = await read<bigint>("maxLendingAllocationBps");
+  await sleep(RPC_PACING_MS);
 
-  const perAsset = await Promise.all(
-    assets.map(async (asset) => {
-      const [maxBps, isStable] = await Promise.all([
-        read<bigint>("maxAllocationBpsPerAsset", [asset.address]),
-        read<boolean>("isStableAsset", [asset.address]),
-      ]);
-      return `${asset.symbol}: maxAllocationBps=${maxBps}, isStable=${isStable}`;
-    }),
-  );
+  const perAsset: string[] = [];
+  for (const asset of assets) {
+    const maxBps = await read<bigint>("maxAllocationBpsPerAsset", [asset.address]);
+    await sleep(RPC_PACING_MS);
+    const isStable = await read<boolean>("isStableAsset", [asset.address]);
+    await sleep(RPC_PACING_MS);
+    perAsset.push(`${asset.symbol}: maxAllocationBps=${maxBps}, isStable=${isStable}`);
+  }
 
   return [
     `maxDrawdownBps: ${maxDrawdownBps}`,
@@ -113,56 +125,55 @@ export async function buildPolicyLimitsStruct(
   const read = <T>(functionName: (typeof VAULT_POLICY_LIMITS_ABI)[number]["name"], args: readonly unknown[] = []) =>
     publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_LIMITS_ABI, functionName, args } as Parameters<typeof publicClient.readContract>[0]) as Promise<T>;
 
-  const [
-    maxDrawdownBps,
-    maxTradesPerDay,
-    minStableAllocationBps,
-    oracleMaxStalenessSeconds,
-    oracleMaxDeviationBps,
-    maxDrawdownSpeedBpsPerWindow,
-    drawdownSpeedWindowSeconds,
-    autoPauseBountyAmount,
-    minLpTickRangeWidth,
-    maxLpPositionValueLossBps,
-    maxLpOutOfRangeSeconds,
-    minLpPoolLiquidityRatioBps,
-    maxLpAllocationBps,
-    lendingReportStaleAfterSeconds,
-    lendingReportMaxDeviationBps,
-    lendingPositionForceUnwindSeconds,
-    maxLendingAllocationBps,
-  ] = await Promise.all([
-    read<bigint>("maxDrawdownBps"),
-    read<bigint>("maxTradesPerDay"),
-    read<bigint>("minStableAllocationBps"),
-    read<bigint>("oracleMaxStalenessSeconds"),
-    read<bigint>("oracleMaxDeviationBps"),
-    read<bigint>("maxDrawdownSpeedBpsPerWindow"),
-    read<bigint>("drawdownSpeedWindowSeconds"),
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_POLICY_GETTER_ABI, functionName: "autoPauseBountyAmount" }),
-    read<number>("minLpTickRangeWidth"),
-    read<bigint>("maxLpPositionValueLossBps"),
-    read<bigint>("maxLpOutOfRangeSeconds"),
-    read<bigint>("minLpPoolLiquidityRatioBps"),
-    read<bigint>("maxLpAllocationBps"),
-    read<bigint>("lendingReportStaleAfterSeconds"),
-    read<bigint>("lendingReportMaxDeviationBps"),
-    read<bigint>("lendingPositionForceUnwindSeconds"),
-    read<bigint>("maxLendingAllocationBps"),
-  ]);
+  const maxDrawdownBps = await read<bigint>("maxDrawdownBps");
+  await sleep(RPC_PACING_MS);
+  const maxTradesPerDay = await read<bigint>("maxTradesPerDay");
+  await sleep(RPC_PACING_MS);
+  const minStableAllocationBps = await read<bigint>("minStableAllocationBps");
+  await sleep(RPC_PACING_MS);
+  const oracleMaxStalenessSeconds = await read<bigint>("oracleMaxStalenessSeconds");
+  await sleep(RPC_PACING_MS);
+  const oracleMaxDeviationBps = await read<bigint>("oracleMaxDeviationBps");
+  await sleep(RPC_PACING_MS);
+  const maxDrawdownSpeedBpsPerWindow = await read<bigint>("maxDrawdownSpeedBpsPerWindow");
+  await sleep(RPC_PACING_MS);
+  const drawdownSpeedWindowSeconds = await read<bigint>("drawdownSpeedWindowSeconds");
+  await sleep(RPC_PACING_MS);
+  const autoPauseBountyAmount = (await publicClient.readContract({
+    address: vaultAddress,
+    abi: MANDATE_VAULT_POLICY_GETTER_ABI,
+    functionName: "autoPauseBountyAmount",
+  })) as bigint;
+  await sleep(RPC_PACING_MS);
+  const minLpTickRangeWidth = await read<number>("minLpTickRangeWidth");
+  await sleep(RPC_PACING_MS);
+  const maxLpPositionValueLossBps = await read<bigint>("maxLpPositionValueLossBps");
+  await sleep(RPC_PACING_MS);
+  const maxLpOutOfRangeSeconds = await read<bigint>("maxLpOutOfRangeSeconds");
+  await sleep(RPC_PACING_MS);
+  const minLpPoolLiquidityRatioBps = await read<bigint>("minLpPoolLiquidityRatioBps");
+  await sleep(RPC_PACING_MS);
+  const maxLpAllocationBps = await read<bigint>("maxLpAllocationBps");
+  await sleep(RPC_PACING_MS);
+  const lendingReportStaleAfterSeconds = await read<bigint>("lendingReportStaleAfterSeconds");
+  await sleep(RPC_PACING_MS);
+  const lendingReportMaxDeviationBps = await read<bigint>("lendingReportMaxDeviationBps");
+  await sleep(RPC_PACING_MS);
+  const lendingPositionForceUnwindSeconds = await read<bigint>("lendingPositionForceUnwindSeconds");
+  await sleep(RPC_PACING_MS);
+  const maxLendingAllocationBps = await read<bigint>("maxLendingAllocationBps");
+  await sleep(RPC_PACING_MS);
 
   const maxAllocationBpsPerAsset: Record<AssetSymbol, number> = {};
   const isStableAsset: Record<AssetSymbol, boolean> = {};
-  await Promise.all(
-    assets.map(async (asset) => {
-      const [maxBps, isStable] = await Promise.all([
-        read<bigint>("maxAllocationBpsPerAsset", [asset.address]),
-        read<boolean>("isStableAsset", [asset.address]),
-      ]);
-      maxAllocationBpsPerAsset[asset.symbol] = Number(maxBps);
-      isStableAsset[asset.symbol] = isStable;
-    }),
-  );
+  for (const asset of assets) {
+    const maxBps = await read<bigint>("maxAllocationBpsPerAsset", [asset.address]);
+    await sleep(RPC_PACING_MS);
+    const isStable = await read<boolean>("isStableAsset", [asset.address]);
+    await sleep(RPC_PACING_MS);
+    maxAllocationBpsPerAsset[asset.symbol] = Number(maxBps);
+    isStableAsset[asset.symbol] = isStable;
+  }
 
   return {
     maxAllocationBpsPerAsset,
@@ -208,25 +219,43 @@ export async function buildProposeDecisionInput(params: BuildProposeDecisionInpu
     abi: MANDATE_VAULT_POLICY_GETTER_ABI,
     functionName: "policy",
   });
+  await sleep(RPC_PACING_MS);
 
   // Assets known to this vault but not in stableAssets need a different
   // real price source (getVolatileAssetPriceUSDC's on-chain quoter, not
-  // CoinGecko), see agent/core/tools/getMarketData.ts. Both run in
-  // parallel and are merged into one MarketData.prices array so the model
-  // and checkPolicyOffchain see every asset's price uniformly, regardless
-  // of which real source it actually came from.
+  // CoinGecko), see agent/core/tools/getMarketData.ts. Both are merged
+  // into one MarketData.prices array so the model and checkPolicyOffchain
+  // see every asset's price uniformly, regardless of which real source it
+  // actually came from.
   const volatileAssets = params.assets.filter((a) => !params.stableAssets.includes(a.symbol) && !a.isBaseAsset);
 
-  const [vaultState, policyLimitsText, stablePrices, volatilePrices] = await Promise.all([
-    getVaultState(params.publicClient, params.vaultAddress, params.assets),
-    buildPolicyLimitsText(params.publicClient, policyAddress, params.assets),
-    getMarketData(
-      params.stableAssets.map((asset) => ({ asset })),
-      params.untrustedMarketContext,
-    ),
-    Promise.all(volatileAssets.map((a) => getVolatileAssetPriceUSDC(params.publicClient, a.symbol))),
-  ]);
+  // getMarketData is a CoinGecko HTTP call, not a real Arc RPC read -- it
+  // never shares the same rate-limit bucket as the calls below, so it is
+  // kicked off here and only awaited once everything Arc-RPC-related is
+  // done, rather than serialized behind them for no reason.
+  const stablePricesPromise = getMarketData(
+    params.stableAssets.map((asset) => ({ asset })),
+    params.untrustedMarketContext,
+  );
 
+  // Every one of these DOES hit the real Arc Testnet RPC, and firing them
+  // via Promise.all was confirmed live (2026-07-20, wiring v5's own
+  // scheduled decision cycle) to trip the public RPC's "request limit
+  // reached" rejection -- same root cause as getVaultState.ts's and
+  // buildPolicyLimitsText/Struct's own RPC_PACING_MS fix, applied here for
+  // the same reason: this path runs for every vault version's real,
+  // scheduled decision cycle, not just v5's.
+  const vaultState = await getVaultState(params.publicClient, params.vaultAddress, params.assets);
+  await sleep(RPC_PACING_MS);
+  const policyLimitsText = await buildPolicyLimitsText(params.publicClient, policyAddress, params.assets);
+  await sleep(RPC_PACING_MS);
+  const volatilePrices: AssetPriceInput[] = [];
+  for (const asset of volatileAssets) {
+    volatilePrices.push(await getVolatileAssetPriceUSDC(params.publicClient, asset.symbol));
+    await sleep(RPC_PACING_MS);
+  }
+
+  const stablePrices = await stablePricesPromise;
   const marketData = { prices: [...stablePrices.prices, ...volatilePrices], untrustedContext: stablePrices.untrustedContext };
 
   return {

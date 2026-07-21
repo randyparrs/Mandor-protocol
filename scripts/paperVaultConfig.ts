@@ -8,7 +8,7 @@
 import type { AssetSymbol } from "../shared/decision.js";
 import type { PolicyLimits } from "../shared/policyTypes.js";
 import type { KnownAsset } from "../agent/core/tools/getVaultState.js";
-import { V3_YIELD_STRATEGY_TEXT } from "./v3StrategyText.js";
+import { V5_ERGODIC_REBALANCING_PAPER_DEMO_TEXT } from "./v5StrategyText.js";
 import { PAPER_TEST_TOKEN_ASSETS } from "./paperVaultTestTokens.js";
 
 // Recognizably synthetic (real Arc addresses are effectively random
@@ -110,17 +110,15 @@ export function buildPaperPolicyLimitsText(): string {
 
 export const PAPER_STRATEGY_VERSION = "paper-demo-v1";
 
-// v3's real yield-seeking strategy text (see this project's v3 design
-// doc), reused here rather than duplicated: the Paper Vault demonstrates
-// the same liquidity-curator narrative the real v3 vault uses, just via
-// the existing ENTER/EXIT/REBALANCE action vocabulary (no NFT/tick
-// simulation here, see shared/paperVaultState.ts's own doc comment), and
-// with simulated liquidity conditions deliberately more favorable than
-// real Arc testnet conditions today, since nothing here is ever at risk.
-// This is deliberately different framing from v1/v2's conservative
-// "prefer HOLD absent a clear reason" text (scripts/runDecisionCycle.ts).
-export const PAPER_STRATEGY_CONFIG_TEXT =
-  "SIMULATED demo vault, no real funds are ever at risk (nothing here executes onchain). " +
-  "Simulated liquidity conditions here are deliberately more favorable than real Arc testnet conditions today, " +
-  "so you can demonstrate a richer variety of decisions than the real vault's own current constraints allow. " +
-  V3_YIELD_STRATEGY_TEXT;
+// Switched from v3's yield-seeking text to v5's ergodic-rebalancing demo
+// text (2026-07-20, per Randy's own explicit request): since the real v5
+// vault cannot execute real cirBTC trades yet (Blocker A/B, see
+// docs/v5-ergodic-rebalancing.md), the Paper Vault is currently the ONLY
+// place that can demonstrate v5's full bidirectional rebalancing
+// mechanism working end to end (entering AND exiting a position for
+// real), valuable for the hackathon demo video. Uses
+// MANDORTEST-EQUITY in place of cirBTC specifically because it has a
+// genuinely independent reference price and is not subject to the real
+// INDEPENDENT_REFERENCE_PRICE_REQUIRED_TO_BUY block cirBTC itself is, see
+// scripts/v5StrategyText.ts's own doc comment on exactly why.
+export const PAPER_STRATEGY_CONFIG_TEXT = V5_ERGODIC_REBALANCING_PAPER_DEMO_TEXT;

@@ -2,6 +2,17 @@ import type { PublicClient } from "viem";
 import { formatRawAmount, scaleToInternalFixedPoint, INTERNAL_FIXED_POINT_DECIMALS } from "../../../shared/money.js";
 import type { AssetSymbol, VaultState } from "../types.js";
 
+// The real, public Arc Testnet RPC rejects a burst of simultaneous
+// eth_call requests ("request limit reached"), confirmed live 2026-07-20
+// while wiring v5's own scheduled decision cycle -- same root cause as
+// agent/core/context.ts's own RPC_PACING_MS note, this file's reads are
+// paced the same way rather than fired via Promise.all, since this
+// affects every vault version's real, scheduled decision cycle equally.
+const RPC_PACING_MS = 3000;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Minimal, framework-agnostic ABI fragments, just the read functions this
 // tool needs. Not imported from Hardhat's artifact system on purpose:
 // agent/core must stay usable outside a Hardhat project (see
@@ -110,15 +121,20 @@ export async function getVaultState(
     abi: MANDATE_VAULT_ABI,
     functionName: "policy",
   });
+  await sleep(RPC_PACING_MS);
 
-  const [totalAssetsRaw, currentDrawdownBps, tradesToday, highWaterMarkRaw, paused, rawLpPositions] = await Promise.all([
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "totalAssets" }),
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentDrawdownBps" }),
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "tradesToday" }),
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "highWaterMarkUSDC" }),
-    publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_ABI, functionName: "paused" }),
-    publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentLpPositions" }),
-  ]);
+  const totalAssetsRaw = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "totalAssets" });
+  await sleep(RPC_PACING_MS);
+  const currentDrawdownBps = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentDrawdownBps" });
+  await sleep(RPC_PACING_MS);
+  const tradesToday = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "tradesToday" });
+  await sleep(RPC_PACING_MS);
+  const highWaterMarkRaw = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "highWaterMarkUSDC" });
+  await sleep(RPC_PACING_MS);
+  const paused = await publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_ABI, functionName: "paused" });
+  await sleep(RPC_PACING_MS);
+  const rawLpPositions = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentLpPositions" });
+  await sleep(RPC_PACING_MS);
 
   const baseAsset = assets.find((a) => a.isBaseAsset);
   if (!baseAsset) {
@@ -126,53 +142,53 @@ export async function getVaultState(
   }
 
   let baseAssetDecimals = 0;
-  const holdings = await Promise.all(
-    assets.map(async (asset) => {
-      const [ledgerAmount, decimals] = await Promise.all([
-        publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "ledgerOf", args: [asset.address] }),
-        publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "assetDecimals", args: [asset.address] }),
-      ]);
+  const holdings: Array<{ asset: AssetSymbol; ledgerAmount: string; valueUSDC: string }> = [];
+  for (const asset of assets) {
+    const ledgerAmount = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "ledgerOf", args: [asset.address] });
+    await sleep(RPC_PACING_MS);
+    const decimals = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "assetDecimals", args: [asset.address] });
+    await sleep(RPC_PACING_MS);
 
-      let valueUSDC18: bigint;
-      if (asset.isBaseAsset) {
-        baseAssetDecimals = decimals;
-        // MandateVault.totalAssets() sums every asset's value in the base
-        // asset's own native decimals (contracts/MandateVault.sol's
-        // totalAssets(): `_ledger[asset()] + _valueInUSDC(...)` for
-        // everything else), NOT a fixed 18-decimal representation, confirmed
-        // live: a real 5 USDC (6-decimal) seed deposit reads back as
-        // totalAssets() == 5_000_000, not 5e18. Rescale to the shared
-        // internal fixed point so every asset's value is comparable, format
-        // back to a human-readable decimal string before returning, see
-        // shared/money.ts for why raw/wei strings must never reach VaultState.
-        valueUSDC18 = scaleToInternalFixedPoint(ledgerAmount, decimals);
-      } else {
-        const priceUSDC = await publicClient.readContract({
-          address: vaultAddress,
-          abi: MANDATE_VAULT_ABI,
-          functionName: "lastKnownPriceUSDC",
-          args: [asset.address],
-        });
-        // 0 until a real executeDecision call has priced this asset at
-        // least once, never fabricated here.
-        const ledgerIn18 = scaleToInternalFixedPoint(ledgerAmount, decimals);
-        valueUSDC18 = (ledgerIn18 * priceUSDC) / 10n ** BigInt(INTERNAL_FIXED_POINT_DECIMALS);
-      }
+    let valueUSDC18: bigint;
+    if (asset.isBaseAsset) {
+      baseAssetDecimals = decimals;
+      // MandateVault.totalAssets() sums every asset's value in the base
+      // asset's own native decimals (contracts/MandateVault.sol's
+      // totalAssets(): `_ledger[asset()] + _valueInUSDC(...)` for
+      // everything else), NOT a fixed 18-decimal representation, confirmed
+      // live: a real 5 USDC (6-decimal) seed deposit reads back as
+      // totalAssets() == 5_000_000, not 5e18. Rescale to the shared
+      // internal fixed point so every asset's value is comparable, format
+      // back to a human-readable decimal string before returning, see
+      // shared/money.ts for why raw/wei strings must never reach VaultState.
+      valueUSDC18 = scaleToInternalFixedPoint(ledgerAmount, decimals);
+    } else {
+      const priceUSDC = await publicClient.readContract({
+        address: vaultAddress,
+        abi: MANDATE_VAULT_ABI,
+        functionName: "lastKnownPriceUSDC",
+        args: [asset.address],
+      });
+      await sleep(RPC_PACING_MS);
+      // 0 until a real executeDecision call has priced this asset at
+      // least once, never fabricated here.
+      const ledgerIn18 = scaleToInternalFixedPoint(ledgerAmount, decimals);
+      valueUSDC18 = (ledgerIn18 * priceUSDC) / 10n ** BigInt(INTERNAL_FIXED_POINT_DECIMALS);
+    }
 
-      return {
-        asset: asset.symbol,
-        // Human-readable decimal strings, matching the convention every
-        // other caller of VaultState already assumes (loop.ts JSON.stringifies
-        // this straight into Claude's prompt; scripts/testProposeDecision.ts
-        // and agent/core/promptInjection.test.ts's fixtures both use plain
-        // decimals like "9000.00"). A raw/wei integer string here would
-        // silently feed Claude a number many orders of magnitude off from
-        // the vault's real size, see shared/money.ts.
-        ledgerAmount: formatRawAmount(ledgerAmount, decimals),
-        valueUSDC: formatRawAmount(valueUSDC18, INTERNAL_FIXED_POINT_DECIMALS),
-      };
-    }),
-  );
+    holdings.push({
+      asset: asset.symbol,
+      // Human-readable decimal strings, matching the convention every
+      // other caller of VaultState already assumes (loop.ts JSON.stringifies
+      // this straight into Claude's prompt; scripts/testProposeDecision.ts
+      // and agent/core/promptInjection.test.ts's fixtures both use plain
+      // decimals like "9000.00"). A raw/wei integer string here would
+      // silently feed Claude a number many orders of magnitude off from
+      // the vault's real size, see shared/money.ts.
+      ledgerAmount: formatRawAmount(ledgerAmount, decimals),
+      valueUSDC: formatRawAmount(valueUSDC18, INTERNAL_FIXED_POINT_DECIMALS),
+    });
+  }
 
   // v3 only: openValueUSDC/currentValueUSDC come back in the same
   // base-asset-native scale as totalAssetsRaw/highWaterMarkRaw above
@@ -192,7 +208,7 @@ export async function getVaultState(
     currentPoolLiquidity: p.currentPoolLiquidity.toString(),
   }));
 
-  // v4 only. Read defensively, never as part of the Promise.all batch
+  // v4 only. Read defensively, never as part of the sequential batch
   // above: v1/v2/v3's real deployed vaults predate this field entirely
   // (confirmed live via cast --trace, see executor/keeperService.ts's own
   // "INTENTIONAL FORK" note), so calling lendingRegistry() against them
@@ -207,6 +223,7 @@ export async function getVaultState(
   let currentLendingPositions: VaultState["currentLendingPositions"] = [];
   try {
     const lendingRegistryAddress = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "lendingRegistry" });
+    await sleep(RPC_PACING_MS);
     if (lendingRegistryAddress !== "0x0000000000000000000000000000000000000000") {
       const rawLendingPositions = await publicClient.readContract({
         address: lendingRegistryAddress,
