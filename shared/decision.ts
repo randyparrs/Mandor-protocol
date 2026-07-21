@@ -1,4 +1,4 @@
-// The structured decision schema Claude must emit. Strict, no free text for
+// The structured decision schema the AI agent must emit. Strict, no free text for
 // anything execution-relevant. `reasoning` is the one free-text field and it
 // is read only by explainability/timeline code, never by anything with
 // execution authority, the actual authority boundary is enforced in
@@ -38,7 +38,7 @@ export interface TargetAllocation {
 export interface VaultDecision {
   vaultId: `0x${string}`;
   strategyVersion: string;
-  modelId: string; // pinned Claude model id that produced this decision
+  modelId: string; // pinned AI model id that produced this decision
   action: DecisionAction;
   asset?: AssetSymbol; // primary asset for ENTER/EXIT
   amount?: string; // human decimal, present for ENTER/EXIT

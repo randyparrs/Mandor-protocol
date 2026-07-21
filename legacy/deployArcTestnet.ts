@@ -4,7 +4,7 @@
 // mechanism and is superseded by v3/v4/v5. See legacy/README.md.
 // Run with: npx hardhat run legacy/deployArcTestnet.ts --network arcTestnet
 //
-// Sequence: the deployer wallet (Claude CLI's ARC_PRIVATE_KEY) holds
+// Sequence: the deployer wallet's ARC_PRIVATE_KEY, run via the AI agent CLI, holds
 // ADMIN_ROLE/DEFAULT_ADMIN_ROLE TEMPORARILY, only long enough to grant the
 // other roles and call createVault. The very last steps transfer both roles
 // to the real ADMIN/GOVERNANCE address and have the deployer renounce them

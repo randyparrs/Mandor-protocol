@@ -52,7 +52,7 @@ export interface DecisionPipelineEntry {
   // instead of fetching a second, independently-timed price for the same
   // execution, see executor/README.md.
   marketData: MarketData;
-  // Claude's extended-thinking trace for this proposal, explainability
+  // The AI agent's extended-thinking trace for this proposal, explainability
   // only, same zero-execution-authority rule as `decision.reasoning` (see
   // shared/decision.ts's own doc comment), never read by anything with
   // execution authority. null when the model produced no thinking block
@@ -133,7 +133,7 @@ export class DecisionPipeline {
     }
   }
 
-  /// @notice The full real path: proposeDecision (real Claude call) ->
+  /// @notice The full real path: proposeDecision (real AI agent call) ->
   /// checkPolicyOffchain -> anomaly flags -> queue. Costs a real API call
   /// every time, never call this in a fast/free test, see
   /// test/decisionPipeline.ts, which exercises enqueue/confirm/reject/expire

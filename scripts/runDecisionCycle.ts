@@ -1,5 +1,5 @@
 // One full unattended cycle, for every configured vault: propose (real
-// Claude call) -> auto-confirm ONLY if HOLD (agreed with Randy: HOLD never
+// AI agent call) -> auto-confirm ONLY if HOLD (agreed with Randy: HOLD never
 // moves funds, always empty swap legs, so this is functionally equivalent
 // to a human clicking confirm every time) -> keeper executes anything
 // confirmed -> indexer catches up on real onchain events.

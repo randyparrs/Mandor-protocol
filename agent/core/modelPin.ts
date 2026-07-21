@@ -1,4 +1,4 @@
-// Per-vault pinned Claude model version, no silent migration, see
+// Per-vault pinned AI model version, no silent migration, see
 // docs/architecture.md and docs/threat-model.md's "Model drift on silent
 // version updates" row. In-memory for now; Phase 3's real VaultMetadata
 // store backs this the same way, the shape doesn't change.

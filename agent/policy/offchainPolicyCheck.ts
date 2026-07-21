@@ -118,7 +118,7 @@ export function projectHoldings(
   marketData: MarketData,
 ): { holdings: ProjectedHolding[]; totalUSDC: bigint } {
   // vaultState's USDC-denominated fields are human-readable decimal strings
-  // (e.g. "9000.00"), matching what actually reaches Claude's prompt via
+  // (e.g. "9000.00"), matching what actually reaches the AI agent's prompt via
   // loop.ts, not raw/wei integers, see getVaultState.ts's own note on this.
   const currentByAsset = new Map<AssetSymbol, bigint>(
     vaultState.holdings.map((h) => [h.asset, parseRawAmount(h.valueUSDC, FIXED_POINT_DECIMALS)]),

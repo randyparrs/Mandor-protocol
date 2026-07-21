@@ -2,7 +2,7 @@
 
 Framework-agnostic reasoning module. Mirrors Vpay's `agent/core` in spirit.
 
-`proposeDecision()` reads vault state and market data, then asks Claude to
+`proposeDecision()` reads vault state and market data, then asks the AI agent to
 produce a structured `VaultDecision` (see `shared/decision.ts`). That is all
 this module does.
 
@@ -36,7 +36,7 @@ call via `client.messages.parse`), `types.ts`, `schemas.ts` (Zod, generated
 from `shared/decision.ts`'s shape, not hand-written, using `zod/v4`
 specifically since `zodOutputFormat`'s internal `z.toJSONSchema` call only
 accepts `zod/v4`-shaped schemas), `systemPrompt.ts`, `modelPin.ts` (per-vault
-pinned Claude model version, no silent migration).
+pinned AI model version, no silent migration).
 
 Model: pinned per vault via `modelPin.ts`, never hardcoded in `loop.ts`
 itself. Currently pinned to `claude-sonnet-5` for this stage, an explicit
@@ -46,7 +46,7 @@ cost-driven choice, not `claude-opus-4-8`. Structured output via
 the action is exactly what `proposeDecision` is deciding, so a branch keyed
 on the action can't run before the action exists. Adaptive thinking has no
 budget parameter at all, unlike the older `enabled`/`budget_tokens` mode,
-Claude decides organically whether and how much to think, per request, with
+The AI agent decides organically whether and how much to think, per request, with
 no dial to set.
 
 **Worst-case cost per decision is bounded, verified against the code, not
@@ -111,7 +111,7 @@ rather than a hand-copied string that could drift from what the contract
 actually enforces; `buildPolicyLimitsStruct` reads the same data as a
 structured `PolicyLimits` object instead of prompt text, for
 `agent/policy/offchainPolicyCheck.ts`. `scripts/testContextAgainstRealVault.ts`
-runs the full pipeline for real: real vault state, through a real Claude
+runs the full pipeline for real: real vault state, through a real AI agent
 call, to a structured decision, confirmed working end to end against the
 live USDC-only vault.
 
@@ -122,13 +122,13 @@ against this same live vault: `getVaultState` was returning
 an internally-rescaled 18-decimal fixed-point integer for `valueUSDC`),
 **not the human-readable decimal strings every consumer of `VaultState`
 already assumes** (`loop.ts` puts `JSON.stringify(vaultState)` straight into
-Claude's prompt; `scripts/testProposeDecision.ts` and
+the AI agent's prompt; `scripts/testProposeDecision.ts` and
 `promptInjection.test.ts`'s own fixtures both use plain decimals like
 `"9000.00"`). A real 5 USDC seed deposit was coming back as
 `totalAssetsUSDC: "5000000"` (raw 6-decimal integer) instead of `"5"`, and
 `valueUSDC: "5000000000000000000"` (18-decimal wei-style) instead of `"5"`,
 meaning every real `proposeDecision` call made against this vault before
-this fix showed Claude a vault size many orders of magnitude off from
+this fix showed the AI agent a vault size many orders of magnitude off from
 reality. `HOLD` was still the obviously correct action regardless, so no
 past decision was wrong in outcome, but the reasoning was built on wrong
 numbers, exactly the kind of thing this project's discipline exists to
@@ -153,7 +153,7 @@ permanent regression test, deliberately using a 6-decimal USDC mock (not
 this repo's usual 18-decimal one, which makes the scaling step a no-op and
 is exactly how this bug went unnoticed for so long): it asserts the exact
 expected human-decimal string against a real local vault, so a regression
-back to a raw/unformatted amount fails loudly instead of Claude silently
+back to a raw/unformatted amount fails loudly instead of the AI agent silently
 reasoning on wrong magnitudes again.
 
 **`getMarketData` reads a real, current price for stable assets, never a

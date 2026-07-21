@@ -180,10 +180,10 @@ export async function getVaultState(
       asset: asset.symbol,
       // Human-readable decimal strings, matching the convention every
       // other caller of VaultState already assumes (loop.ts JSON.stringifies
-      // this straight into Claude's prompt; scripts/testProposeDecision.ts
+      // this straight into the AI agent's prompt; scripts/testProposeDecision.ts
       // and agent/core/promptInjection.test.ts's fixtures both use plain
       // decimals like "9000.00"). A raw/wei integer string here would
-      // silently feed Claude a number many orders of magnitude off from
+      // silently feed the AI agent a number many orders of magnitude off from
       // the vault's real size, see shared/money.ts.
       ledgerAmount: formatRawAmount(ledgerAmount, decimals),
       valueUSDC: formatRawAmount(valueUSDC18, INTERNAL_FIXED_POINT_DECIMALS),

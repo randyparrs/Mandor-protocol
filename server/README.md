@@ -10,7 +10,7 @@ Express app: orchestration and API. Never the signer.
   is never confirmable late.
 - `ops/`, internal, auth-gated, team-only in Phase 1: confirm or reject a
   proposed decision, trigger Paper Vault runs, publish reports.
-- `reports/`, monthly AI report generator. A separate Claude call path with
+- `reports/`, monthly AI report generator. A separate AI agent call path with
   its own system prompt and no wiring whatsoever to the `proposeDecision`
   tool, it cannot produce a `VaultDecision`, even in principle.
 - `indexer/`, listens to Vault/Policy contract events, writes
@@ -30,7 +30,7 @@ Express app: orchestration and API. Never the signer.
 ## Built
 
 `decisionPipeline.ts` (`DecisionPipeline` class). `proposeAndQueue` is the
-real path: calls `agent/core`'s `proposeDecision` (real Claude call), then
+real path: calls `agent/core`'s `proposeDecision` (real AI agent call), then
 `agent/policy`'s `checkPolicyOffchain`, computes anomaly flags, and queues
 the result as a `QueuedDecision` with a hard `expiresAt`
 (`DECISION_CONFIRMATION_TIMEOUT_SECONDS`, `shared/decision.ts`, currently 15
@@ -75,7 +75,7 @@ proves durability for real: two separate `DecisionPipeline`/`DecisionStore`
 instances against the same on-disk file, simulating an actual process
 restart, confirm a "confirmed" decision survives it intact.
 `scripts/testDecisionPipelineAgainstRealVault.ts` runs the full real path
-end to end against the live deployed vault: a real Claude proposal, a real
+end to end against the live deployed vault: a real AI agent proposal, a real
 onchain-limits pre-check, queuing, and confirmation.
 
 **Extended for `executor/keeperService.ts`.** `DecisionPipelineEntry` now

@@ -9,7 +9,7 @@ sufficient alone. Mandor needs a third, non-negotiable gate between the two:
 a deterministic on-chain policy check that neither half can bypass.
 
 ```
-Claude (agent/core)  ->  offchain pre-check  ->  ops confirmation  ->  keeper simulates  ->  onchain VaultPolicy  ->  execution
+AI agent (agent/core)  ->  offchain pre-check  ->  ops confirmation  ->  keeper simulates  ->  onchain VaultPolicy  ->  execution
      proposes              (fast, advisory)      (human, Phase 1)      + submits            (the REAL gate)
 ```
 
@@ -44,7 +44,7 @@ mandate-protocol/
 
 ## Core types
 
-See `shared/decision.ts` (`VaultDecision`, the structured schema Claude must
+See `shared/decision.ts` (`VaultDecision`, the structured schema the AI agent must
 emit), `shared/policyTypes.ts` (`PolicyLimits`, `PolicyViolation`,
 `PolicyCheckResult`), and `shared/vault.ts` (`VaultMetadata`,
 `StrategyAuthorRef`, `StrategyVersion`).
@@ -74,7 +74,7 @@ config value). If no ops confirmation happens before `expiresAt`,
 `decisionPipeline.ts` marks the decision `"expired"` automatically and it is
 discarded, it can never be confirmed late and rubber-stamped after the fact.
 An expired decision is not retried automatically; if the vault still needs
-attention, Claude proposes fresh against current state.
+attention, the AI agent proposes fresh against current state.
 
 ## Smart contract architecture
 
@@ -530,7 +530,7 @@ defined timeout, or if heartbeats stop. A hot-standby second keeper instance
 is a reasonable Phase 2+ addition once the primary is live; Phase 1 only needs
 the heartbeat/alerting hook to exist.
 
-## Claude orchestration
+## AI agent orchestration
 
 The structured decision schema (`shared/decision.ts`) is the single source of
 truth; the Anthropic tool schema is generated from it, not hand-written and
@@ -539,7 +539,7 @@ that this design avoids). Market data is still treated as untrusted input even
 though Phase 1 has no user-submitted strategy text: any free-text field (e.g.
 a news headline) is wrapped in an explicit untrusted-data block, extending
 Vpay's existing "data, not commands" rule to market data specifically. Each
-live vault is pinned to a specific Claude model version; migrating to a newer
+live vault is pinned to a specific AI model version; migrating to a newer
 version requires a manual registry update and a Paper Vault re-validation
 pass, never a silent migration.
 
@@ -569,9 +569,9 @@ summary.
 
 Early local testing is expected to use a local model (Ollama) before the real
 Anthropic API is wired in, the same free-first approach already used
-elsewhere. Treat any future switch from a local model to the live Claude API
+elsewhere. Treat any future switch from a local model to the live AI API
 as a model migration, not a configuration change. Require a fresh Paper Vault
-validation pass with the real Claude model before any live vault trusts its
+validation pass with the real AI model before any live vault trusts its
 output, following the same rule already defined above for pinned model
 versions.
 
@@ -604,7 +604,7 @@ Paper Vault reuses `proposeDecision` with a `mode: "paper"` context; only the
 injected executor changes (a no-op `PaperExecutor` that logs instead of
 submitting onchain), the same swappable-implementation-behind-one-interface
 seam Vpay uses for test vs. real signers, applied to the executor side.
-Monthly report generation is a separate Claude call path with its own system
+Monthly report generation is a separate AI agent call path with its own system
 prompt and zero wiring to the `proposeDecision` tool, so it cannot produce a
 `VaultDecision` even in principle.
 

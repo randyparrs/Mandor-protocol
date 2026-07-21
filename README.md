@@ -1,7 +1,7 @@
 # Mandor Protocol
 
 An AI-native investment protocol on Arc Network. Users deposit capital into
-vaults; each vault is managed by an autonomous Claude agent that proposes
+vaults; each vault is managed by an autonomous AI agent that proposes
 investment decisions.
 
 > **Status note**: This protocol has gone through two iterations. **v1**
@@ -15,7 +15,7 @@ investment decisions.
 
 ## The one rule everything else is built around
 
-**The AI agent is an advisor, never a custodian.** Claude never holds keys,
+**The AI agent is an advisor, never a custodian.** The AI agent never holds keys,
 never signs a transaction, and never has a direct path to move funds. It only
 produces a structured proposal. Every proposal must pass a deterministic,
 non-AI, on-chain policy contract before anything executes. A proposal that
@@ -44,7 +44,7 @@ tiers are Phase 4. `VaultRegistry.sol` (a dedicated on-chain contract for the
 `strategyAuthor` field) is deferred to Phase 4: the canonical vault list it
 was meant to provide is already covered by `VaultFactory`'s own
 `allVaults`/`isMandateVault`, and `strategyAuthor` has no practical effect
-while the team is the sole vault creator. No Claude wiring exists yet, there
+while the team is the sole vault creator. No AI agent wiring exists yet, there
 is no working frontend or backend. See `docs/architecture.md` for the full
 design.
 
@@ -56,7 +56,7 @@ design.
   fixed-cap `CapitalLimitRegistry` implemented, with Foundry test coverage
   and invariant tests started immediately, not deferred. `VaultRegistry.sol`
   and progressive/reputation-based capital limits are Phase 4.
-- **Phase 3:** real Claude wiring (`agent/core`), the keeper/executor service,
+- **Phase 3:** real AI agent wiring (`agent/core`), the keeper/executor service,
   Paper Vault simulation mode.
 - **Phase 4:** reputation, withdrawal/NAV mechanics, oracle aggregation,
   progressive capital limits, `VaultRegistry.sol`.
@@ -67,5 +67,5 @@ design.
 
 Architectural seed: Vpay (`C:\Users\randy\Desktop\design_handoff_vpay\app`), a
 sibling project on the same stack (React/Vite, Express, Solidity + OpenZeppelin,
-Privy, Claude). See `docs/architecture.md` for what is reused and what had to
+Privy, an AI agent). See `docs/architecture.md` for what is reused and what had to
 go beyond Vpay's pattern.

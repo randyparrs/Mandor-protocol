@@ -1,7 +1,7 @@
 // Single source of truth for converting between raw on-chain integer
 // amounts and the human-readable decimal strings every consumer of
 // VaultState/PolicyLimits/MarketData actually expects (loop.ts puts
-// JSON.stringify(vaultState) straight into Claude's prompt; the vaultState
+// JSON.stringify(vaultState) straight into the AI agent's prompt; the vaultState
 // fixtures in scripts/testProposeDecision.ts and
 // agent/core/promptInjection.test.ts both use plain decimals like "9000.00").
 //
@@ -9,7 +9,7 @@
 // individual files has already produced one real, live bug: getVaultState.ts
 // used to return totalAssetsUSDC/valueUSDC as raw, unformatted integers
 // (native on-chain decimals, or an internally-rescaled 18-decimal integer),
-// which fed Claude a vault size many orders of magnitude off from reality
+// which fed the AI agent a vault size many orders of magnitude off from reality
 // (see agent/core/README.md's postmortem). Every file that needs to format
 // or scale a raw on-chain amount should import from here instead of calling
 // viem's formatUnits/parseUnits directly, so there is exactly one place this

@@ -376,7 +376,7 @@ Gen3-era addresses above remain abandoned.
 
 Real Safe (formerly Gnosis Safe), v1.4.1, deployed directly by Randy and
 Eudo via the official app.safe.global UI on Arc Testnet -- not scripted by
-Claude, since owner wallets and the deploy transaction itself belong to
+the AI agent, since owner wallets and the deploy transaction itself belong to
 the real signers, not something to hand a private key over for.
 
 **Live-verified before trusting Arc Testnet support, not assumed**: both
@@ -788,7 +788,7 @@ deposit).
 Bootstrap deployer wallet is not the signer here: these are the real
 `ADMIN_ROLE` holder's transactions, `0x884687C973e9b7Af697dC34Aed1F09Da06BC4253`,
 run by Randy in his own terminal (keystore-protected
-`ARC_ADMIN_PRIVATE_KEY`, never handled by Claude), the only step in this
+`ARC_ADMIN_PRIVATE_KEY`, never handled by the AI agent), the only step in this
 whole v3 rollout that needed that key opened.
 
 | # | Step | Tx hash |

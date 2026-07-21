@@ -10,7 +10,7 @@ from `docs/deployments.md`, for historical reference only.
 
 Deployed 2026-07-10 via `legacy/deployArcTestnet.ts` (originally
 `scripts/deployArcTestnet.ts`), run by Randy in his own terminal
-(keystore-protected `ARC_PRIVATE_KEY`, never handled by Claude). Every
+(keystore-protected `ARC_PRIVATE_KEY`, never handled by the AI agent). Every
 address, role assignment, and balance below was independently
 re-verified live against Arc Testnet after the fact (`eth_getCode`,
 `hasRole`, `totalAssets`, and the transaction history itself via the

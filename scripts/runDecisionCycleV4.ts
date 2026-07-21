@@ -1,5 +1,5 @@
 // One full unattended cycle, for every configured v4/v5-shaped vault:
-// propose (real Claude call) -> auto-confirm ONLY if HOLD (same rule as
+// propose (real AI agent call) -> auto-confirm ONLY if HOLD (same rule as
 // scripts/runDecisionCycle.ts: HOLD never moves funds, always empty
 // swap/lp/bridge legs, functionally equivalent to a human clicking
 // confirm every time) -> keeper executes anything confirmed -> indexer

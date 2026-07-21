@@ -1,4 +1,4 @@
-// One full unattended Paper Vault cycle: propose (real Claude call, real
+// One full unattended Paper Vault cycle: propose (real AI agent call, real
 // market data) -> offchain pre-check (against the deliberately permissive
 // PAPER_POLICY_LIMITS, see scripts/paperVaultConfig.ts) -> PaperExecutor
 // logs it (never onchain, no real funds, ever) -> if the pre-check passed,
@@ -99,7 +99,7 @@ async function runPaperVaultCycle(): Promise<void> {
     marketData,
   };
 
-  console.log("--- proposeDecision (real Claude call, real market data) ---");
+  console.log("--- proposeDecision (real AI agent call, real market data) ---");
   const { decision, thinkingText, thinkingTokens } = await proposeDecision(input);
   console.log(`Proposed ${decision.action} (confidence ${decision.confidence})`);
 

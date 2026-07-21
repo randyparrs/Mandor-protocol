@@ -1,5 +1,5 @@
 // Verifies KeeperService end to end against the real deployed vault: real
-// Claude proposal -> queue -> confirm -> keeper simulates, submits, and
+// AI agent proposal -> queue -> confirm -> keeper simulates, submits, and
 // confirms a REAL executeDecision transaction (a HOLD, empty swap legs, so
 // it costs gas but changes no vault state). This is the first real
 // transaction this keeper ever signs, review before running.
@@ -36,12 +36,12 @@ const input = await buildProposeDecisionInput({
 setModelPin(VAULT_ADDRESS, "claude-sonnet-5");
 
 const pipeline = new DecisionPipeline();
-console.log("=== proposeAndQueue (real Claude call) ===");
+console.log("=== proposeAndQueue (real AI agent call) ===");
 const entry = await pipeline.proposeAndQueue(input, { vaultState: input.vaultState, policyLimits, marketData: input.marketData, assets });
 console.log(JSON.stringify(entry.queued.decision, null, 2));
 
 if (entry.queued.decision.action !== "HOLD") {
-  console.log(`Claude proposed ${entry.queued.decision.action}, not HOLD. This script only verifies the HOLD path (no swap-leg construction yet), stopping without confirming or executing.`);
+  console.log(`The AI agent proposed ${entry.queued.decision.action}, not HOLD. This script only verifies the HOLD path (no swap-leg construction yet), stopping without confirming or executing.`);
   process.exit(0);
 }
 

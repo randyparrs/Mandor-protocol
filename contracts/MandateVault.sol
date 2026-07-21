@@ -19,7 +19,7 @@ import {LiquidityAmounts} from "./lib/LiquidityAmounts.sol";
 /// @notice The ERC-4626 vault that actually custodies funds. Deposits/mints
 /// are gated by VaultPolicy's pause state; withdrawals/redeems never are,
 /// same discipline P2PMarket.sol already proved (pause blocks new exposure
-/// only, never exits). Claude never touches this contract directly: the
+/// only, never exits). The AI agent never touches this contract directly: the
 /// keeper calls executeDecision with a Decision that must already have
 /// passed VaultPolicy's deterministic gate, checked twice (before and after
 /// the actual swap), never once.
@@ -514,7 +514,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, IStaleWithdrawalBountyPayer, 
     // Decision execution
     // ---------------------------------------------------------------------
 
-    /// @notice The only way Claude's proposals ever touch this vault. The
+    /// @notice The only way the AI agent's proposals ever touch this vault. The
     /// keeper supplies the Decision itself and fresh prices; this contract
     /// builds VaultState from its own ledger, it is never handed one, so a
     /// buggy or compromised keeper cannot fabricate a compliant-looking

@@ -55,7 +55,7 @@ function hashSystemBlocks(blocks: Array<{ text: string }>): string {
 }
 
 /// @notice proposeDecision only ever reads vault state and market data and
-/// asks Claude to produce a structured decision, per agent/core/README.md.
+/// asks the AI agent to produce a structured decision, per agent/core/README.md.
 /// It never signs, never builds a transaction, and never trusts the model
 /// for anything about its own context (vaultId, strategyVersion, modelId
 /// come from trusted input/the pin registry, never from the model's own
@@ -112,12 +112,12 @@ export async function proposeDecision(input: ProposeDecisionInput): Promise<Prop
   })();
 
   if (message.stop_reason === "refusal") {
-    throw new Error("Claude declined to propose a decision (safety refusal)");
+    throw new Error("The AI agent declined to propose a decision (safety refusal)");
   }
 
   const parsed = message.parsed_output;
   if (!parsed) {
-    throw new Error("Claude did not return a parsed structured output");
+    throw new Error("The AI agent did not return a parsed structured output");
   }
 
   const thinkingBlocks = message.content.filter((block): block is Anthropic.Messages.ThinkingBlock => block.type === "thinking");

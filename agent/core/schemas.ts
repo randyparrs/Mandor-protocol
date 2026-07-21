@@ -34,7 +34,7 @@ export const TargetAllocationSchema = z.object({
 // codebase supplies itself, never something the model asserts about its own
 // identity or context, the same discipline MandateVault.sol applies by
 // building VaultState from its own ledger rather than trusting a
-// keeper-supplied one. Only the fields Claude actually decides go here.
+// keeper-supplied one. Only the fields the AI agent actually decides go here.
 export const LLMDecisionOutputSchema = z.object({
   action: DecisionActionSchema,
   asset: z.string().nullable(),

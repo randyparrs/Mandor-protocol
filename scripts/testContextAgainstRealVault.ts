@@ -37,7 +37,7 @@ const input = await buildProposeDecisionInput({
 });
 console.log(JSON.stringify(input, null, 2));
 
-console.log("\n=== proposeDecision, full pipeline: real vault state -> real Claude decision ===");
+console.log("\n=== proposeDecision, full pipeline: real vault state -> real AI agent decision ===");
 setModelPin(VAULT_ADDRESS, "claude-sonnet-5");
 const result = await proposeDecision(input);
 console.log(JSON.stringify(result.decision, null, 2));

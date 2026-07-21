@@ -1,5 +1,5 @@
 // Verifies server/decisionPipeline.ts's full real path against the real
-// deployed vault: proposeDecision (one real Claude API call) ->
+// deployed vault: proposeDecision (one real AI agent API call) ->
 // checkPolicyOffchain -> anomaly flags -> queue -> confirm. Run with:
 // npx tsx scripts/testDecisionPipelineAgainstRealVault.ts
 import "dotenv/config";
@@ -33,7 +33,7 @@ const input = await buildProposeDecisionInput({
 setModelPin(VAULT_ADDRESS, "claude-sonnet-5");
 
 const pipeline = new DecisionPipeline();
-console.log("=== proposeAndQueue (real Claude call + real onchain reads) ===");
+console.log("=== proposeAndQueue (real AI agent call + real onchain reads) ===");
 const entry = await pipeline.proposeAndQueue(input, { vaultState: input.vaultState, policyLimits, marketData: input.marketData, assets });
 console.log(JSON.stringify(entry, null, 2));
 
