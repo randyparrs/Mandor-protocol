@@ -13,6 +13,20 @@ import { EventStore, type IndexedEvent } from "../db/eventStore.js";
 import { DecisionPipeline, type DecisionPipelineEntry } from "../decisionPipeline.js";
 import { ConsoleAlertSink, makeEvent, type AlertSink } from "../../shared/alertSink.js";
 
+// The real, public Arc Testnet RPC rejects "request limit reached" not
+// just for a burst of simultaneous calls (see agent/core/context.ts's own
+// RPC_PACING_MS note) but, confirmed live 2026-07-21 immediately after a
+// real end-to-end v5 decision cycle run, also for a sequential call that
+// simply follows too closely behind a long preceding chain of other real
+// calls in the same process. pollOnce/indexContract's calls were already
+// sequential (never Promise.all), but had no pacing between them, so they
+// get the same treatment for full, consistent closure of this same bug
+// class across every shared RPC-calling path.
+const RPC_PACING_MS = 3000;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export const MANDATE_VAULT_EVENTS_ABI = [
   { type: "event", name: "PolicySet", inputs: [{ name: "policy", type: "address", indexed: true }] },
   {
@@ -164,7 +178,9 @@ export class EventIndexer {
   /// range never duplicates a row.
   async pollOnce(): Promise<void> {
     const latest = await this.config.publicClient.getBlockNumber();
+    await sleep(RPC_PACING_MS);
     await this.indexContract(this.config.vaultAddress, MANDATE_VAULT_EVENTS_ABI, latest);
+    await sleep(RPC_PACING_MS);
     await this.indexContract(this.config.policyAddress, VAULT_POLICY_EVENTS_ABI, latest);
   }
 
@@ -181,6 +197,7 @@ export class EventIndexer {
     while (fromBlock <= latest) {
       const toBlock = fromBlock + chunk - 1n > latest ? latest : fromBlock + chunk - 1n;
       const logs = await this.config.publicClient.getContractEvents({ address, abi, fromBlock, toBlock });
+      await sleep(RPC_PACING_MS);
       for (const log of logs) {
         if (!log.eventName || !log.transactionHash || log.logIndex === null) continue;
         const event: IndexedEvent = {

@@ -2,6 +2,19 @@ import type { PublicClient } from "viem";
 import type { AssetPriceInput, AssetSymbol, MarketData } from "../types.js";
 import { formatRawAmount } from "../../../shared/money.js";
 
+// The real, public Arc Testnet RPC rejects a burst of simultaneous
+// eth_call requests ("request limit reached"), same root cause as
+// agent/core/context.ts's own RPC_PACING_MS note. getVolatileAssetPriceUSDC's
+// two reads below were already sequential (not Promise.all) but had no
+// pacing between them, and a live 2026-07-21 end-to-end test of v5's own
+// scheduled decision cycle showed this was still enough to occasionally
+// trip the same rejection after a long preceding chain of calls, so it
+// gets the same pacing treatment as the other fixed call sites.
+const RPC_PACING_MS = 3000;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface StableAssetPrice {
   asset: AssetSymbol;
 }
@@ -197,6 +210,7 @@ export async function getVolatileAssetPriceUSDC(publicClient: PublicClient, asse
   }
 
   const [sqrtPriceX96] = await publicClient.readContract({ address: config.poolAddress, abi: POOL_ABI, functionName: "slot0" });
+  await sleep(RPC_PACING_MS);
   const token0 = await publicClient.readContract({ address: config.poolAddress, abi: POOL_ABI, functionName: "token0" });
   const assetIsToken0 = token0.toLowerCase() === config.assetAddress.toLowerCase();
 
