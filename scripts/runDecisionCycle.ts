@@ -9,9 +9,10 @@
 // fresh, independent process, using the real persisted
 // DecisionPipeline/EventStore (data/mandate.db) so state survives across
 // invocations, not an in-memory instance that would forget everything
-// between scheduled runs. Both vaults below share the same underlying
-// data/mandate.db (already vault/contract-scoped internally by every
-// query in DecisionPipeline/EventStore), not a separate database each.
+// between scheduled runs. Any vault configured below would share the same
+// underlying data/mandate.db (already vault/contract-scoped internally by
+// every query in DecisionPipeline/EventStore), not a separate database
+// each -- see VAULTS's own comment for why that list is empty today.
 //
 // ENTER/EXIT/REBALANCE/EMERGENCY_EXIT_TO_STABLE are never auto-confirmed,
 // no exceptions, they sit in the queue exactly like any manually-proposed
@@ -30,22 +31,8 @@ import { EventIndexer } from "../server/indexer/eventIndexer.js";
 import { EventStore } from "../server/db/eventStore.js";
 import type { KnownAsset } from "../agent/core/tools/getVaultState.js";
 
-const USDC_ADDRESS = "0x3600000000000000000000000000000000000000" as const;
-const CIRBTC_ADDRESS = "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF" as const;
-
 const STRATEGY_VERSION = "v1";
 const BASE_STRATEGY_CONFIG_TEXT = "Conservative income strategy. Prefer HOLD unless there is a clear, well-supported reason to rebalance.";
-
-// Told to the agent itself, not just enforced downstream: without this,
-// the first time the agent proposed an ENTER/REBALANCE increasing cirBTC,
-// it would sail through proposal and ops confirmation only to be hard-
-// rejected by executor/keeperService.ts's requireIndependentReferencePriceToBuy
-// at execution time, with no obvious explanation to whoever confirmed it.
-// Telling the agent up front means it simply won't propose the blocked
-// action, matching Randy's own "not a silent surprise" standard, applied
-// to the reasoning layer, not just the execution layer.
-const V2_CIRBTC_RESTRICTION_NOTE =
-  "This vault's strategy allows holding cirBTC, but today you must never propose ENTER into cirBTC or any REBALANCE that increases cirBTC's target allocation: no genuinely independent reference price exists for cirBTC yet (see docs/arc-facts-to-verify.md), so any such action is hard-rejected at execution time regardless of what you propose. Reducing cirBTC exposure (EXIT, REBALANCE decreasing cirBTC's target, EMERGENCY_EXIT_TO_STABLE) remains fully available and unaffected.";
 
 interface VaultCycleConfig {
   label: string;
@@ -61,28 +48,20 @@ interface VaultCycleConfig {
   strategyConfigText?: string;
 }
 
-const VAULTS: VaultCycleConfig[] = [
-  {
-    label: "v1 (USDC-only)",
-    vaultAddress: "0x9D1b2853722bc69C062D044D74DBeFae430422be",
-    policyAddress: "0x5285D175849513b5918aaB5c539b5ED79EEF1A1f",
-    vaultCreationBlock: 51112175n,
-    assets: [{ symbol: "USDC", address: USDC_ADDRESS, isBaseAsset: true }],
-    stableAssets: ["USDC"],
-  },
-  {
-    label: "v2 (USDC + cirBTC)",
-    vaultAddress: "0x6a00e9de0b830Fd2Bc37db7C19Ae8b67a0df1862",
-    policyAddress: "0x676a1dd7CF88C768559d9A3ECC60F5Fc5319b9d5",
-    vaultCreationBlock: 51318322n,
-    assets: [
-      { symbol: "USDC", address: USDC_ADDRESS, isBaseAsset: true },
-      { symbol: "cirBTC", address: CIRBTC_ADDRESS },
-    ],
-    stableAssets: ["USDC"],
-    strategyConfigText: `${BASE_STRATEGY_CONFIG_TEXT} ${V2_CIRBTC_RESTRICTION_NOTE}`,
-  },
-];
+// EMPTY ON PURPOSE (2026-07-21): v1 and v2 are fully discontinued, per
+// Randy's own explicit decision, not just deprioritized -- he does not
+// want them consuming any further RPC calls, gas, or generating any more
+// decision history, ever again. This is the code-level guarantee: even an
+// accidental manual run of this script (`node --import tsx
+// scripts/runDecisionCycle.ts`) now does nothing at all, since the loop
+// below has nothing to iterate. Confirmed live 2026-07-21 that no Windows
+// Scheduled Task, running process, Startup entry, or Run registry key
+// anywhere on this machine was actually driving this script either, so
+// there was nothing at the OS level left to disable. v1/v2's own already
+// deployed contracts and their real onchain history are untouched and
+// permanent, see legacy/README.md, this only ever stops FUTURE automated
+// activity. Do not re-add v1/v2 here.
+const VAULTS: VaultCycleConfig[] = [];
 
 async function runCycleForVault(publicClient: PublicClient, decisionStore: DecisionStore, eventStore: EventStore, config: VaultCycleConfig): Promise<void> {
   console.log(`\n=== ${config.label}: ${config.vaultAddress} ===`);
