@@ -4,6 +4,19 @@ pragma solidity ^0.8.28;
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IVaultPolicy, IAutoPausePayer} from "./interfaces/IVaultPolicy.sol";
 
+/// @notice SHARED ACROSS EVERY DEPLOYED VERSION (v1 through v5): this is a
+/// single source file, not one file per version. Each version is a separate
+/// DEPLOYED INSTANCE of this exact same contract, distinguished by its own
+/// constructor parameters (ConstructorLimits: maxDrawdownBps,
+/// maxAllocationBpsPerAsset, etc.) and which VaultFactory generation
+/// created it (Gen1 for v1/v2, Gen2 for v3, Gen3 for v4, Gen4 for v5, see
+/// contracts/VaultFactory.sol), never a separate contract per version.
+/// Newer versions' fields (LP limits for v3, lending limits for v4) are
+/// simply zeroed/unused for older versions' real deployed instances. See
+/// docs/deployments.md for the full, real address/transaction history of
+/// every version, and legacy/README.md for why v1/v2 specifically are
+/// discontinued.
+///
 /// @notice The deterministic, non-AI gate every proposed vault decision must
 /// pass before MandateVault builds a transaction. Fully immutable except the
 /// `paused` flag, a materially different risk profile means a new

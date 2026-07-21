@@ -16,6 +16,21 @@ import {ICCTPTokenMessenger} from "./interfaces/ICCTPTokenMessenger.sol";
 import {TickMath} from "./lib/TickMath.sol";
 import {LiquidityAmounts} from "./lib/LiquidityAmounts.sol";
 
+/// @notice SHARED ACROSS EVERY DEPLOYED VERSION (v1 through v5): this is a
+/// single source file, not one file per version. Each version (v1
+/// USDC-only, v2 USDC+cirBTC, v3 LP yield, v4 cross-chain lending, v5
+/// ergodic rebalancing) is a separate DEPLOYED INSTANCE of this exact same
+/// contract, distinguished by its own constructor parameters (risk limits:
+/// maxDrawdownBps, maxAllocationBpsPerAsset, etc.) and which VaultFactory
+/// generation created it (Gen1 for v1/v2, Gen2 for v3, Gen3 for v4, Gen4
+/// for v5, see contracts/VaultFactory.sol and VaultPolicy.sol's own
+/// matching note), never a separate contract per version. Newer versions'
+/// fields (LP position tracking for v3, cross-chain lending for v4) are
+/// simply unused/zeroed for older versions' real deployed instances, not a
+/// sign anything is missing. See docs/deployments.md for the full, real
+/// address/transaction history of every version, and legacy/README.md for
+/// why v1/v2 specifically are discontinued.
+///
 /// @notice The ERC-4626 vault that actually custodies funds. Deposits/mints
 /// are gated by VaultPolicy's pause state; withdrawals/redeems never are,
 /// same discipline P2PMarket.sol already proved (pause blocks new exposure
