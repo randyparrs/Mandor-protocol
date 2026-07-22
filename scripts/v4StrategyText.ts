@@ -3,7 +3,7 @@
 // explicit reasoning note for why the trust-boundary constraint is a hard
 // constraint, not a soft preference.
 //
-// The 4% minimum entry APY floor is Randy's own confirmed decision
+// The 4% minimum entry APY floor is a confirmed decision
 // (2026-07-18), grounded in real mainnet Aave USDC rates researched at
 // the time (Ethereum ~3.2-3.5%, Arbitrum typically running higher due to
 // thinner liquidity/demand) -- slightly below v3's 5% LP fee-APR floor,

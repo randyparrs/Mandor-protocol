@@ -207,8 +207,8 @@ An earlier draft of this vault raised `maxDrawdownBps` from 10% to 50%
 vault-wide, reasoning that this strategy's own 65%-cirBTC cap produces
 larger real drawdowns (30-49% per `research/ergodic-rebalancing/REPORT.md`)
 that would otherwise trip a 10% circuit breaker constantly, including
-blocking the very `REBALANCE` action needed to recover. Randy rejected this
-as too blunt: raising `maxDrawdownBps` globally dilutes a safety parameter
+blocking the very `REBALANCE` action needed to recover. This approach was
+rejected as too blunt: raising `maxDrawdownBps` globally dilutes a safety parameter
 meant to catch abnormal conditions (bugs, oracle manipulation, catastrophic
 failure), not to accommodate one strategy's own expected behavior.
 

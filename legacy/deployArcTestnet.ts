@@ -41,13 +41,13 @@ const ERC20_APPROVE_ABI = [
 ] as const;
 
 // ---------------------------------------------------------------------
-// Real addresses, confirmed by Randy, not placeholders.
+// Real addresses, confirmed live, not placeholders.
 // ---------------------------------------------------------------------
 const ADMIN_GOVERNANCE_ADDRESS = getAddress("0x884687C973e9b7Af697dC34Aed1F09Da06BC4253");
 const KEEPER_ADDRESS = getAddress("0xdfFDd05D61dbF4074A6C012d22deBfcf0d80c219");
 const PAUSER_RANDY_ADDRESS = getAddress("0x6639c0Ea56009EE64e11526221C28B979C698855");
 const PAUSER_EUDO_ADDRESS = getAddress("0x24b26f00Fa24FA41ef2EffBa5Be359f9301524f2");
-const PROTOCOL_TREASURY_ADDRESS = ADMIN_GOVERNANCE_ADDRESS; // same address for this stage, per Randy
+const PROTOCOL_TREASURY_ADDRESS = ADMIN_GOVERNANCE_ADDRESS; // same address for this stage
 
 // Real, verified Arc Testnet addresses, see docs/arc-facts-to-verify.md.
 const USDC_ADDRESS = getAddress("0x3600000000000000000000000000000000000000"); // native USDC's ERC-20 interface, 6 decimals

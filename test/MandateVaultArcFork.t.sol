@@ -319,8 +319,8 @@ contract MandateVaultArcForkTest is Test {
 
     /// @dev Confirms the atomic revert-and-rollback (already proven with a
     /// mocked router in test/MandateVault.ts) still holds with a REAL swap
-    /// leg through the real router and pool, per Randy's explicit ask:
-    /// deliberately sizes the swap so the resulting allocation exceeds a
+    /// leg through the real router and pool: deliberately sizes the
+    /// swap so the resulting allocation exceeds a
     /// separate, stricter policy's maxAllocationBpsPerAsset[cirBTC], the
     /// whole transaction (including the already-executed real router swap)
     /// must revert and leave the vault's ledger completely untouched.
@@ -953,11 +953,11 @@ contract MandateVaultArcForkTest is Test {
     // empirically, not assumed, before choosing this design. Faking that
     // second transfer's real value-movement semantics correctly would mean
     // reimplementing Arc's own precompile logic in this test, fabricating
-    // behavior rather than verifying real code, so it isn't done. Randy
-    // confirmed this split (real vault + real native USDC + real timelock
+    // behavior rather than verifying real code, so it isn't done. This
+    // split (real vault + real native USDC + real timelock
     // skip, mocked CCTP messenger only, real CCTP interaction covered
-    // separately by the live script) is the right approach here, rather
-    // than treating this as a gap.
+    // separately by the live script) was confirmed as the right approach
+    // here, rather than treating this as a gap.
     // ------------------------------------------------------------------
 
     address internal constant USDC_NATIVE = 0x3600000000000000000000000000000000000000;

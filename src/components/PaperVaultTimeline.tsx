@@ -4,8 +4,8 @@ import type { PaperVaultTimelineEntry } from "../lib/paperVaultTimeline";
 // card styling (plain white cards, solid border): a striped, high-contrast
 // treatment repeated at both the section level and on every single card,
 // so a viewer never mistakes this for real vault activity, whether they
-// see the whole section or just one card cropped out of it. Per Randy's
-// explicit ask: a hackathon judge must never be able to look at this and
+// see the whole section or just one card cropped out of it. This is
+// deliberate: a hackathon judge must never be able to look at this and
 // think the simulated cirBTC exposure here was ever a real trade.
 const STRIPE_BACKGROUND = "repeating-linear-gradient(135deg, #fff3cd, #fff3cd 12px, #ffe69c 12px, #ffe69c 24px)";
 

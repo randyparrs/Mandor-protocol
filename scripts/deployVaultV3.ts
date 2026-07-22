@@ -127,8 +127,8 @@ const POLICY_LIMITS = {
   maxDrawdownSpeedBpsPerWindow: 300n, // same as v1/v2
   drawdownSpeedWindowSeconds: 3600n, // same as v1/v2
   // v3-only. See contracts/VaultPolicy.sol's own doc comments on each
-  // immutable for what these mean; values match Randy's own confirmed
-  // concrete triggers (this project's v3 design doc) and the fork-tested
+  // immutable for what these mean; values match this project's own
+  // confirmed concrete triggers (v3 design doc) and the fork-tested
   // fixture in test/MandateVaultArcFork.t.sol's _lpPolicy.
   minLpTickRangeWidth: 1200n,
   maxLpPositionValueLossBps: 300n, // 3%

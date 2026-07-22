@@ -127,7 +127,7 @@ const CIRBTC_ADDRESS = getAddress("0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF");
 // own expected, in-band drawdowns (research/ergodic-rebalancing's own real
 // backtest measured 30-40% max drawdown for the REBALANCED strategy
 // itself, and 41-49% for a naive 50/50 buy-and-hold, over the exact real
-// historical window tested). Randy explicitly rejected that approach:
+// historical window tested). That approach was explicitly rejected:
 // raising maxDrawdownBps vault-wide dilutes a safety parameter meant to
 // catch ABNORMAL conditions (bugs, oracle manipulation, catastrophic
 // failure), not to accommodate one strategy's own expected behavior.

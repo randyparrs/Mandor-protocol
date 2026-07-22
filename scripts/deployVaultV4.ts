@@ -67,11 +67,11 @@ const CCTP_TOKEN_MESSENGER = getAddress("0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542
 // ---------------------------------------------------------------------
 // Deployment parameters. Base risk limits match v1/v2/v3's exact values
 // (same conservative starting point). LP fields all zeroed (v4 never
-// touches the LP mechanism). Lending fields: the four values Randy
-// confirmed 2026-07-17 (three already recorded as his own confirmed
-// placeholders in VaultPolicy.sol's own doc comments; maxLendingAllocationBps
-// is new, 30% rather than v3's 50% LP cap -- Randy's own explicit
-// reasoning: v3's LP risk is verifiable entirely on Arc in the same
+// touches the LP mechanism). Lending fields: the four values confirmed
+// 2026-07-17 (three already recorded as confirmed placeholders in
+// VaultPolicy.sol's own doc comments; maxLendingAllocationBps
+// is new, 30% rather than v3's 50% LP cap -- deliberately lower:
+// v3's LP risk is verifiable entirely on Arc in the same
 // transaction, cross-chain lending risk depends on the destination-chain
 // keeper reporting honestly, so a smaller share of NAV should ever be
 // exposed to that distinct risk).
@@ -86,14 +86,14 @@ const POLICY_LIMITS = {
   // 70%, the exact complement of maxLendingAllocationBps (30%): the vault's
   // own ledger (real, Arc-local, verifiable) must never drop below this
   // share of NAV even with the maximum permitted amount bridged out,
-  // matching Randy's own "majority of NAV stays in something Arc can
+  // matching the "majority of NAV stays in something Arc can
   // verify on its own" reasoning.
   minStableAllocationBps: 7000n,
   oracleMaxStalenessSeconds: 3600n, // same as v1/v2/v3
   oracleMaxDeviationBps: 500n, // same as v1/v2/v3
   maxDrawdownSpeedBpsPerWindow: 300n, // same as v1/v2/v3
   drawdownSpeedWindowSeconds: 3600n, // same as v1/v2/v3
-  // v4-only, Randy's own confirmed values, 2026-07-17.
+  // v4-only, confirmed values, 2026-07-17.
   lendingReportStaleAfterSeconds: 86_400n, // 24h
   lendingReportMaxDeviationBps: 200n, // 2%
   lendingPositionForceUnwindSeconds: 604_800n, // 7 days
@@ -175,7 +175,7 @@ async function main() {
       maxLpOutOfRangeSeconds: 0n,
       minLpPoolLiquidityRatioBps: 0n,
       maxLpAllocationBps: 0n,
-      // Lending fields: Randy's own confirmed values, 2026-07-17.
+      // Lending fields: confirmed values, 2026-07-17.
       lendingReportStaleAfterSeconds: POLICY_LIMITS.lendingReportStaleAfterSeconds,
       lendingReportMaxDeviationBps: POLICY_LIMITS.lendingReportMaxDeviationBps,
       lendingPositionForceUnwindSeconds: POLICY_LIMITS.lendingPositionForceUnwindSeconds,

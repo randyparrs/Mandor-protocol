@@ -21,7 +21,7 @@
 // project, same isolation discipline as every other single-purpose wallet
 // here. The real ADMIN key is only needed later, for the actual
 // createVault call against this new factory (deployVaultV4.ts, held off
-// per Randy's explicit instruction until the three real v4 blockers --
+// deliberately until the three real v4 blockers --
 // CCTP TokenMessenger/domain, the 2-of-3 Safe multisig, the Arbitrum
 // Sepolia keeper wallet -- are resolved).
 //

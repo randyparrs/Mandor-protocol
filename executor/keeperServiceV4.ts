@@ -15,8 +15,8 @@
 // module for v1/v2/v3's older struct shape, sharing most of this file's
 // logic by copy, not by import (same "new version = new deployment, never
 // touch a live one" principle already applied to the contracts
-// themselves, extended to this executor layer, Randy's own explicit
-// decision). scripts/runDecisionCycle.ts's real, scheduled production
+// themselves, extended to this executor layer, a deliberate decision).
+// scripts/runDecisionCycle.ts's real, scheduled production
 // cycle for v1/v2 depends on THAT file's ABI staying exactly as-is.
 //
 // Consequence: a security-relevant fix discovered in one of these two
@@ -162,8 +162,8 @@ const CHAIN_ID_TO_CCTP_DOMAIN: Record<number, number> = {
 const CIRCLE_IRIS_API_BASE = "https://iris-api-sandbox.circle.com/v2";
 const ATTESTATION_POLL_INTERVAL_MS = 5_000;
 // Real Fast Transfer attestations land in ~8-20s (CCTP_MIN_FINALITY_THRESHOLD's
-// own doc comment); 5 minutes is a generous multiple of that, Randy's own
-// confirmed bound: past this, treat it as an anomaly and alert, never
+// own doc comment); 5 minutes is a generous multiple of that, a confirmed
+// bound: past this, treat it as an anomaly and alert, never
 // poll indefinitely with no visibility.
 const ATTESTATION_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 // Bounded timeout for the CCTP fee-quote query itself (a much simpler,
@@ -1044,7 +1044,7 @@ function parseIrisMessagesResponse(raw: unknown): IrisMessage | null {
   return { message: entry.message as Hex, attestation: entry.attestation as Hex, status: entry.status };
 }
 
-/// @notice Bounded poll (Randy's explicit requirement): if attestation
+/// @notice Bounded poll (a deliberate requirement): if attestation
 /// doesn't arrive within timeoutMs, treat it as an anomaly and alert,
 /// rather than polling indefinitely with no visibility. Real Fast
 /// Transfer attestations land in ~8-20s, so the real default (5 minutes,

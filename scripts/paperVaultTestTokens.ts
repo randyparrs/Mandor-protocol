@@ -4,8 +4,8 @@
 // agent/core/tools/getMarketData.ts, not an extension of its
 // VOLATILE_ASSET_QUOTE_CONFIG: that file's config is shared by v1/v2's
 // real scripts/runDecisionCycle.ts and will feed the real v3 vault once
-// deployed, and these 4 tokens must never appear there (Randy's explicit
-// "confirm nothing here touches v1, v2, or the real v3 vault"). Keeping
+// deployed, and these 4 tokens must never appear there (a hard requirement:
+// nothing here may touch v1, v2, or the real v3 vault). Keeping
 // them in a distinct file makes that a structural fact, not just a
 // promise kept by discipline.
 import type { PublicClient } from "viem";

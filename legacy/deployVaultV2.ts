@@ -50,8 +50,8 @@ const UNITFLOW_V3_ROUTER = getAddress("0x509cF58CdA08C7aee83a2BdBb4A1Eac907343D0
 const CIRBTC_ADDRESS = getAddress("0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF");
 
 // ---------------------------------------------------------------------
-// Deployment parameters. minStableAllocationBps=8000 (Randy's explicit
-// call, the more conservative end for this vault's first volatile asset):
+// Deployment parameters. minStableAllocationBps=8000 (a deliberate
+// choice, the more conservative end for this vault's first volatile asset):
 // at most 20% of NAV in cirBTC. maxAllocationBpsPerAsset[cirBTC] is set to
 // the same 2000bps ceiling for consistency, not a separate, looser number
 // that minStableAllocationBps would just override anyway.
@@ -63,7 +63,7 @@ const SEED_AMOUNT = parseUnits("5", 6); // 5 USDC, same minimal-real-capital siz
 const POLICY_LIMITS = {
   maxDrawdownBps: 1000n, // 10%, same as v1
   maxTradesPerDay: 5n, // same as v1
-  minStableAllocationBps: 8000n, // 80%, Randy's explicit call for this vault's first volatile asset
+  minStableAllocationBps: 8000n, // 80%, a deliberate, conservative choice for this vault's first volatile asset
   oracleMaxStalenessSeconds: 3600n, // same as v1
   oracleMaxDeviationBps: 500n, // same as v1
   maxDrawdownSpeedBpsPerWindow: 300n, // same as v1
@@ -153,8 +153,8 @@ async function main() {
   console.log(`VaultPolicy v2: ${policyAddress}`);
 
   // Read-only verification, never assumed: confirm the policy limits
-  // actually landed as configured, especially the two Randy asked to
-  // double check are consistent with each other.
+  // actually landed as configured, especially the two values that must
+  // stay consistent with each other.
   const policy = await viem.getContractAt("VaultPolicy", policyAddress);
   const liveMinStable = await policy.read.minStableAllocationBps();
   const liveMaxCirbtc = await policy.read.maxAllocationBpsPerAsset([CIRBTC_ADDRESS]);

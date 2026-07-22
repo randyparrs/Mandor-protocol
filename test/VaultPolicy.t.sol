@@ -146,7 +146,7 @@ contract VaultPolicyTest is Test {
     }
 
     /// @dev REBALANCE is the one deliberate exception to the drawdown check
-    /// above (Randy's own approved 2026-07-19 design, see
+    /// above (an approved 2026-07-19 design, see
     /// docs/v5-ergodic-rebalancing.md): it passes even while drawdown
     /// exceeds the immutable maxDrawdownBps, as long as every OTHER check
     /// (allocation caps, min stable) is still satisfied. This is what lets

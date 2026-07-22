@@ -133,5 +133,4 @@ by Windows Task Scheduler (one scheduled task, extended to cover both
 vaults rather than one task per vault). `autoConfirmIfHold` on
 `DecisionPipeline` is the only auto-confirmation path this system has,
 deliberately narrow: HOLD never moves funds or changes state, every other
-action always requires a real human `confirmedBy`, no exceptions,
-confirmed explicitly with Randy.
+action always requires a real human `confirmedBy`, no exceptions.

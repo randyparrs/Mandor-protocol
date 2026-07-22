@@ -105,16 +105,16 @@ contract VaultPolicy is IVaultPolicy {
     int24 public immutable minLpTickRangeWidth;
     /// @dev The value-drawdown-since-open-value proxy threshold (not
     /// textbook IL-vs-HODL), see LpPositionHolding's doc comment in
-    /// IVaultPolicy.sol for why. 300 = 3%, Randy's own concrete trigger.
+    /// IVaultPolicy.sol for why. 300 = 3%, a deliberate, final trigger value (not a placeholder).
     uint256 public immutable maxLpPositionValueLossBps;
     /// @dev How long a position may sit outside its own tick range before
-    /// this blocks further non-exit action on it. 48 hours, Randy's own
-    /// concrete trigger.
+    /// this blocks further non-exit action on it. 48 hours, a deliberate,
+    /// final trigger value (not a placeholder).
     uint256 public immutable maxLpOutOfRangeSeconds;
     /// @dev The floor, as a fraction of the pool's own liquidity() at the
     /// moment this vault's position was opened, below which the pool is
     /// considered to have thinned out too much to keep adding to. 5000 =
-    /// 50%, Randy's own concrete trigger.
+    /// 50%, a deliberate, final trigger value (not a placeholder).
     uint256 public immutable minLpPoolLiquidityRatioBps;
     /// @dev Cap on total value locked across every held LP position
     /// combined, as bps of NAV. A position isn't a single registered
@@ -133,8 +133,8 @@ contract VaultPolicy is IVaultPolicy {
     /// back to principalUSDC instead of trusting the stale
     /// currentValueUSDC). NOT itself a validateDecision violation -- a
     /// haircut is a pure accounting adjustment, not a reason to block an
-    /// otherwise-unrelated decision. 86400 = 24h, Randy's own confirmed
-    /// starting placeholder, revisit with real data same as
+    /// otherwise-unrelated decision. 86400 = 24h, a confirmed starting
+    /// placeholder, revisit with real data same as
     /// minLpTickRangeWidth.
     uint256 public immutable lendingReportStaleAfterSeconds;
     /// @dev The maximum a single reportLendingPosition call may move a
@@ -143,8 +143,8 @@ contract VaultPolicy is IVaultPolicy {
     /// MandateVault reverts the call outright. Read by MandateVault only,
     /// never evaluated in validateDecision below, see
     /// VIOLATION_LENDING_POSITION_STALE's own doc comment for why this
-    /// class of check lives as a revert, not a code. 200 = 2%, Randy's own
-    /// confirmed starting placeholder.
+    /// class of check lives as a revert, not a code. 200 = 2%, a confirmed
+    /// starting placeholder.
     uint256 public immutable lendingReportMaxDeviationBps;
     /// @dev Past this many seconds since lastReportedAt, a position is
     /// treated as failed, not just stale: validateDecision blocks every
@@ -154,7 +154,7 @@ contract VaultPolicy is IVaultPolicy {
     /// becomes callable by anyone regardless of whether the agent ever
     /// proposes that withdrawal itself, same "anyone can escalate, the
     /// contract enforces the real condition" pattern as checkAndAutoPause.
-    /// 604800 = 7 days, Randy's own confirmed starting placeholder.
+    /// 604800 = 7 days, a confirmed starting placeholder.
     uint256 public immutable lendingPositionForceUnwindSeconds;
     /// @dev Cap on total value locked across every held cross-chain
     /// lending position combined, as bps of NAV. Mirrors maxLpAllocationBps
@@ -328,8 +328,8 @@ contract VaultPolicy is IVaultPolicy {
         }
 
         // REBALANCE toward the vault's own configured target is exempt from
-        // this check (Randy's own explicit design decision, 2026-07-19,
-        // replacing an earlier, rejected approach of raising maxDrawdownBps
+        // this check (a deliberate design decision, 2026-07-19, replacing
+        // an earlier, rejected approach of raising maxDrawdownBps
         // itself for the whole vault): a REBALANCE's resulting allocation is
         // still fully, unconditionally bounded by maxAllocationBpsPerAsset/
         // minStableAllocationBps above (never exempted), so REBALANCE can

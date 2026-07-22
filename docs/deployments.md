@@ -138,7 +138,7 @@ estimation), and enforces a tight per-request rate limit even for a
 single isolated call under general load (worked around with an explicit
 ~2.5s pause between every RPC call in the script).
 
-**Note for v4+, not acted on now, Randy's own flag**: this mismatch
+**Note for v4+, not acted on now**: this mismatch
 happens every time a new risk-limit field is added to
 `VaultPolicy.ConstructorLimits`, since `VaultFactory.CreateVaultParams`
 embeds that struct directly, forcing a full, real `VaultFactory`
@@ -160,8 +160,8 @@ v4 adds cross-chain lending (see `LendingPositionRegistry.sol`,
 real, already-deployed v3 `VaultFactory`'s `createVault` ABI no longer
 matches current source -- the exact same reason a fresh factory pair was
 needed going from v1/v2 to v3 (see the second-generation section above),
-now recurring for the same structural reason Randy already flagged as
-worth reconsidering for v5+ (the rigid, embedded `ConstructorLimits`
+now recurring for the same structural reason already flagged as worth
+reconsidering for v5+ (the rigid, embedded `ConstructorLimits`
 shape).
 
 **A real, more serious problem surfaced during this bootstrap's own
@@ -225,12 +225,12 @@ single-purpose key, `FACTORY_BOOTSTRAP_DEPLOYER_V4_PRIVATE_KEY`,
 `scripts/generateFactoryBootstrapWalletV4.ts`, deliberately NOT
 `FACTORY_BOOTSTRAP_DEPLOYER_PRIVATE_KEY` reused from v3's own bootstrap,
 holds no role or authority anywhere else in this project, funded with 20
-USDC of real Arc Testnet gas by Randy directly). Needed no privileged
+USDC of real Arc Testnet gas directly). Needed no privileged
 role at all (`MandateVaultDeployer`'s constructor just records
 `msg.sender` and deploys `BytecodePointer` fragments, `VaultFactory`'s
 constructor takes plain addresses); the real `ADMIN_ROLE` key is deliberately
 NOT used yet -- `scripts/deployVaultV4.ts` (the actual vault creation) is
-held off per Randy's own explicit instruction until three real blockers
+held off deliberately until three real blockers
 are resolved (real CCTP TokenMessenger/domain addresses, the 2-of-3 Safe
 multisig for new v4 human governance roles, a dedicated Arbitrum Sepolia
 keeper wallet).
@@ -254,7 +254,7 @@ live runtime size confirmed small; the new `VaultFactory`'s full wiring
 (`roles`/`protocolTreasury`/`capitalLimitRegistry`/`vaultDeployer`) and
 `MandateVaultDeployer.factory()` cross-checked both directions.
 
-**The specific confirmation Randy asked for explicitly**: the real v3
+**Verification that this bootstrap left the live v3 factory untouched**: the real v3
 `VaultFactory` (`0xB6a54F66174D7CE37739945B6Da3b463bbE849D8`)'s full state
 (`roles`/`protocolTreasury`/`capitalLimitRegistry`/`vaultDeployer`/
 `vaultCount`) was read live BEFORE this bootstrap and re-read live AFTER
@@ -374,8 +374,8 @@ Gen3-era addresses above remain abandoned.
 
 ## v4 governance Safe (2-of-2 multisig), status: deployed 2026-07-16
 
-Real Safe (formerly Gnosis Safe), v1.4.1, deployed directly by Randy and
-Eudo via the official app.safe.global UI on Arc Testnet -- not scripted by
+Real Safe (formerly Gnosis Safe), v1.4.1, deployed directly by its two real
+owners via the official app.safe.global UI on Arc Testnet -- not scripted by
 the AI agent, since owner wallets and the deploy transaction itself belong to
 the real signers, not something to hand a private key over for.
 
@@ -388,10 +388,10 @@ transaction service in Safe's official chains API
 (`https://api.safe.global/tx-service/arc-testnet`), meaning the full
 app.safe.global UI experience works here, not just raw SDK/CLI usage.
 
-**Signer threshold, Randy's own explicit reasoning**: 2-of-2, not 2-of-3.
-Only two real people are on this project (Randy, Eudo); adding a third
-"signer" Randy alone would control defeats the purpose of a multisig
-entirely (it would let one person unilaterally hold 2 of 3 keys). The
+**Signer threshold reasoning**: 2-of-2, not 2-of-3. Only two real signers
+exist for this project; adding a third seat that one of the two existing
+signers alone would control defeats the purpose of a multisig entirely
+(it would let one person unilaterally hold 2 of 3 keys). The
 accepted tradeoff: if either signer is ever unavailable, no governance
 action can be approved until they're back -- acceptable for this
 project's current size and testnet stage, preferable to a fake third
@@ -415,13 +415,13 @@ owner addresses and the 2-of-2 threshold exactly as intended.
 ### GOVERNANCE_ROLE granted, status: done 2026-07-17
 
 Real `MandateRoles` (`0x91dC937Cf24cD84B415A1B9AD2f520834334504a`, shared by
-v1/v2/v3/v4 alike) now grants `GOVERNANCE_ROLE` to this Safe, run by Randy
-himself via `scripts/grantGovernanceRoleToSafe.ts` using the real
+v1/v2/v3/v4 alike) now grants `GOVERNANCE_ROLE` to this Safe, run manually
+via `scripts/grantGovernanceRoleToSafe.ts` using the real
 `ARC_ADMIN_PRIVATE_KEY` keystore signer
 (`0x884687C973e9b7Af697dC34Aed1F09Da06BC4253`).
 
-**Deliberate, Randy's own explicit decision: added alongside the ADMIN
-wallet, not instead of it.** The Safe's real propose/sign/execute flow has
+**Deliberate: added alongside the ADMIN wallet, not instead of it.** The
+Safe's real propose/sign/execute flow has
 never been exercised end to end yet; revoking the ADMIN wallet's
 `GOVERNANCE_ROLE` before proving the Safe actually works in practice would
 leave this project's entire governance surface (v1/v2/v3/v4) dependent on
@@ -464,7 +464,7 @@ Safe above) once a real v4 vault exists.
 
 ## v4 CCTP cross-chain messaging, status: verified 2026-07-17
 
-The last of the three original v4 blockers Randy flagged. `ICCTPTokenMessenger.sol`
+The last of the three original v4 blockers identified. `ICCTPTokenMessenger.sol`
 originally shipped with an explicit "TBD, verify before real use" disclaimer
 and a guessed CCTP V1 `depositForBurn` signature (4 params). Live research
 against Circle's real, published source
@@ -506,7 +506,7 @@ MessageTransmitterV2 address live on both chains -- the actual real, correct
 CCTP wiring for both chains this project bridges between, not assumed from
 address matching alone.
 
-### Design decisions confirmed with Randy
+### Confirmed design decisions
 
 - **`destinationCaller`**: set to the same address as `mintRecipient` (the
   destination chain's own dedicated `chainKeeper`, e.g. the Arbitrum Sepolia
@@ -584,7 +584,7 @@ mechanism yet, since that requires a real v4 vault plus the 48h
 
 ### Full atomic path fork test, status: done 2026-07-17
 
-Randy flagged a real gap after the live verification above: the isolated
+A real gap was identified after the live verification above: the isolated
 `depositForBurn` call proved the CCTP interaction is correct, but never
 exercised `MandateVault.executeDecision(BRIDGE_DEPOSIT)` itself -- the
 atomic guarantee that role check, ledger debit, the CCTP call, and
@@ -613,7 +613,7 @@ transfer's real value-movement semantics correctly would mean
 reimplementing Arc's own precompile logic, fabricating behavior rather than
 verifying real code.
 
-**Resolution, confirmed with Randy**: a real fork (real native USDC, real
+**Resolution**: a real fork (real native USDC, real
 `MandateVault`, real `LendingPositionRegistry`, real 48h timelock skipped
 via `vm.warp`), with `MockCCTPTokenMessenger` (`contracts/test/MockCCTPTokenMessenger.sol`,
 implements the exact real `ICCTPTokenMessenger` interface, records the call
@@ -636,19 +636,19 @@ clean after adding it: 93/93 tests passed, 0 failed.
 
 ## Mandate USDC Cross-Chain Lending Vault (v4, real vault) -- ACTIVE, status: deployed 2026-07-17
 
-The real v4 vault itself, `scripts/deployVaultV4.ts`, run by Randy with the
+The real v4 vault itself, `scripts/deployVaultV4.ts`, run manually with the
 real `ARC_ADMIN_PRIVATE_KEY` keystore signer
 (`0x884687C973e9b7Af697dC34Aed1F09Da06BC4253`). USDC-only base asset (no
 otherAssets, unlike v2/v3), real CCTP TokenMessengerV2 wired at construction
 time.
 
-**Lending policy values, Randy's own confirmed decision (2026-07-17)**:
+**Lending policy values, confirmed (2026-07-17)**:
 three (`lendingReportStaleAfterSeconds`, `lendingReportMaxDeviationBps`,
-`lendingPositionForceUnwindSeconds`) were already recorded as his own
+`lendingPositionForceUnwindSeconds`) were already recorded as
 confirmed starting placeholders in `VaultPolicy.sol`'s own doc comments
 from an earlier round; `maxLendingAllocationBps` was freshly decided at
 30% (3000 bps), deliberately more conservative than v3's 50% LP cap --
-his own reasoning: v3's LP risk is verifiable entirely on Arc in the same
+the reasoning: v3's LP risk is verifiable entirely on Arc in the same
 transaction (via `slot0()`/TWAP), while v4's cross-chain lending risk
 depends on the destination-chain keeper reporting honestly, with the
 deviation check as the only real-time defense, so a smaller share of NAV
@@ -696,21 +696,22 @@ Verified independently: fresh reads of `registry.vault()`/`registry.policy()`/
 `registry.roles()` all matched, and `vault.lendingRegistry()` read `0x0`
 before wiring, confirming it was genuinely unset beforehand.
 
-**The Safe's first two real governance actions, both executed 2-of-2 (Randy
-+ Eudo) via app.safe.global's Transaction Builder, not a private-key
+**The Safe's first two real governance actions, both executed 2-of-2 via
+app.safe.global's Transaction Builder, not a private-key
 script** -- the deliberate first real exercise of the Safe's full
-propose/sign/execute flow, per Randy's own explicit choice (see the
+propose/sign/execute flow (see the
 GOVERNANCE_ROLE section above):
 
 1. **`vault.setLendingRegistry(registry)`** -- one-shot, no timelock.
-   Randy proposed and signed, Eudo confirmed, executed. Verified
-   independently: `vault.lendingRegistry()` now reads
+   One signer proposed and signed, the second signer confirmed, executed.
+   Verified independently: `vault.lendingRegistry()` now reads
    `0x17d471bA284635Db88a47361083bA9748CF4688c`, matching the deployed
    registry.
 2. **`registry.proposeChainKeeper(421614, 0xc5c828D0AC3e106C5006c4b62c3eb2405A5462b3)`**
    -- starts the real, unconditional 48h timelock
    (`CHAIN_KEEPER_CHANGE_TIMELOCK`, `LendingPositionRegistry.sol`). Same
-   Safe flow: Randy proposed and signed, Eudo confirmed, executed. Verified
+   Safe flow: one signer proposed and signed, the second signer confirmed,
+   executed. Verified
    independently: `registry.pendingChainKeeper(421614)` reads the real
    Arbitrum Sepolia keeper address, `registry.chainKeeperExecutableAt(421614)`
    reads `1784496005` (2026-07-19 21:20:05 UTC, ~48h out), and
@@ -787,7 +788,7 @@ deposit).
 
 Bootstrap deployer wallet is not the signer here: these are the real
 `ADMIN_ROLE` holder's transactions, `0x884687C973e9b7Af697dC34Aed1F09Da06BC4253`,
-run by Randy in his own terminal (keystore-protected
+run manually in a real terminal (keystore-protected
 `ARC_ADMIN_PRIVATE_KEY`, never handled by the AI agent), the only step in this
 whole v3 rollout that needed that key opened.
 
@@ -845,7 +846,7 @@ gated by this (reducing exposure is always allowed).
 The first two found while reviewing whether `EMERGENCY_EXIT_TO_STABLE`
 (the protocol's unconditional safety valve) genuinely covers a real open
 LP position, not just simple ledger holdings. The third found answering
-Randy's own pre-deployment security questions (whether `slot0()`'s
+pre-deployment security questions (whether `slot0()`'s
 manipulable spot price could affect deposit/withdraw share pricing, and
 whether a depositor could self-sandwich an LP action). All three verified
 with real fork tests and unit tests, not just read from the code:
@@ -914,7 +915,7 @@ with real fork tests and unit tests, not just read from the code:
    (`scripts/deployVaultV3.ts` now does this for the real WUSDC/cirBTC
    pool as part of deployment itself, giving it a head start while
    `LP_OPEN` stays independently gated on the cirBTC restriction above).
-   Depositor self-sandwich (Randy's second question) was confirmed
+   Depositor self-sandwich (the second security question) was confirmed
    structurally impossible regardless: `deposit()`/`withdraw()` are
    standard, unmodified ERC-4626 with zero LP side effects, and
    `executeDecision` (including any LP leg) is `onlyKeeper`-gated, so an

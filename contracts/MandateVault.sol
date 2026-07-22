@@ -263,7 +263,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, IStaleWithdrawalBountyPayer, 
 
     /// @dev Mirrors autoPauseBountyAmount, deliberately duplicated rather
     /// than shared, see IStaleWithdrawalBountyPayer's doc comment in
-    /// ILendingPositionRegistry.sol for Randy's explicit reasoning.
+    /// ILendingPositionRegistry.sol for the design reasoning.
     uint256 public staleWithdrawalBountyAmount;
     uint256 internal constant MAX_STALE_WITHDRAWAL_BOUNTY_BPS = 100; // 1% of current totalAssets(), mirrors MAX_AUTO_PAUSE_BOUNTY_BPS
     uint256 internal constant MAX_STALE_WITHDRAWAL_BOUNTY_ABSOLUTE = 1000e18; // mirrors MAX_AUTO_PAUSE_BOUNTY_ABSOLUTE
@@ -950,7 +950,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, IStaleWithdrawalBountyPayer, 
     /// checkAndInitiateStaleWithdrawal calls back into. Deliberately
     /// duplicated from payAutoPauseBounty, not shared -- see
     /// ILendingPositionRegistry.sol's IStaleWithdrawalBountyPayer doc
-    /// comment for Randy's explicit reasoning (different trigger, likely
+    /// comment for the design reasoning (different trigger, likely
     /// different economics over time).
     function payStaleWithdrawalBounty(address to) external nonReentrant {
         if (msg.sender != lendingRegistry) revert NotLendingRegistry();
@@ -1245,7 +1245,7 @@ contract MandateVault is ERC4626, IAutoPausePayer, IStaleWithdrawalBountyPayer, 
     /// EIP-170 pressure, see foundry.toml's own comment), not a new
     /// behavior. The two bounty POOLS themselves stay fully separate
     /// (separate amounts, separate governance setters, separate events),
-    /// Randy's explicit decision not to couple their economics -- only
+    /// A deliberate decision not to couple their economics -- only
     /// the arithmetic is shared.
     function _capBounty(uint256 amount, uint256 bpsCap, uint256 absoluteCap) internal view returns (uint256) {
         if (amount == 0) return 0;

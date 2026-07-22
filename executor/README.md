@@ -16,7 +16,7 @@ via `shared/paths.ts`'s `projectDataPath` so the log always lands in the
 same place regardless of the process's launch directory, so
 Paper Vault decision history can accumulate before `server/`'s real
 `DecisionRecord` store exists), and `keeperService.ts` (`KeeperService`,
-the real signer, design reviewed with Randy before writing any code, see
+the real signer, design reviewed before writing any code, see
 the plan file this session produced). "The one module that holds a signing
 key" below refers specifically to `keeperService.ts`, not this file's
 `Executor` interface or `PaperExecutor`. `AlertSink`/`AlertEvent`/
@@ -50,7 +50,7 @@ webhook) exists anywhere in this repo yet, a richer one is additive later.
   `EXECUTION_STUCK_TIMEOUT_SECONDS`.
 - **Self-consistency for `EMERGENCY_EXIT_TO_STABLE` only:** 3 fresh
   `proposeDecision` samples against current state, unanimous 3/3 agreement
-  required (Randy's explicit call, this action bypasses every onchain
+  required (a deliberate design choice, this action bypasses every onchain
   allocation/drawdown check). Any dissent returns the entry to
   `"pending_confirmation"` with `priority: "high"` and a
   `SELF_CONSISTENCY_DISAGREEMENT` anomaly flag via
@@ -155,8 +155,8 @@ allocation is being authorized, not removed). Revisit once
 a real Chainlink BTC/USD feed goes live on Arc (verified live, not from an
 announcement).
 
-**A real, verified liquidity blocker, not a code gap, documented plainly
-per Randy's explicit ask:** querying the real UnitFlowV3 Factory live
+**A real, verified liquidity blocker, not a code gap, documented plainly:**
+querying the real UnitFlowV3 Factory live
 found no pool at any fee tier pairing native USDC (the real v2 vault's
 actual base asset) with cirBTC, and the one USDC/EURC pool that exists has
 zero real liquidity (`liquidity() == 0`). The only pool with real,

@@ -13,8 +13,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// keeps in docs/deployments.md.
 ///
 /// Mint is gated to a single admin address (OpenZeppelin's Ownable, an
-/// audited primitive, not reinvented), never open to anyone, matching
-/// Randy's explicit ask, unlike the fully-open-mint MockERC20.sol this
+/// audited primitive, not reinvented), never open to anyone, a deliberate
+/// choice, unlike the fully-open-mint MockERC20.sol this
 /// repo already has for local Hardhat/Foundry tests only (never deployed
 /// for real). Deliberately NOT gated through the project's real,
 /// production MandateRoles registry: that would require the deploying

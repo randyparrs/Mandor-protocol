@@ -1,5 +1,5 @@
 // One full unattended cycle, for every configured vault: propose (real
-// AI agent call) -> auto-confirm ONLY if HOLD (agreed with Randy: HOLD never
+// AI agent call) -> auto-confirm ONLY if HOLD (HOLD never
 // moves funds, always empty swap legs, so this is functionally equivalent
 // to a human clicking confirm every time) -> keeper executes anything
 // confirmed -> indexer catches up on real onchain events.
@@ -48,10 +48,10 @@ interface VaultCycleConfig {
   strategyConfigText?: string;
 }
 
-// EMPTY ON PURPOSE (2026-07-21): v1 and v2 are fully discontinued, per
-// Randy's own explicit decision, not just deprioritized -- he does not
-// want them consuming any further RPC calls, gas, or generating any more
-// decision history, ever again. This is the code-level guarantee: even an
+// EMPTY ON PURPOSE (2026-07-21): v1 and v2 are fully discontinued, a
+// deliberate decision, not just deprioritized -- they must not consume
+// any further RPC calls, gas, or generate any more decision history, ever
+// again. This is the code-level guarantee: even an
 // accidental manual run of this script (`node --import tsx
 // scripts/runDecisionCycle.ts`) now does nothing at all, since the loop
 // below has nothing to iterate. Confirmed live 2026-07-21 that no Windows

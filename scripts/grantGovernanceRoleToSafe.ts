@@ -1,7 +1,7 @@
 // Grants GOVERNANCE_ROLE on the shared MandateRoles (used by v1/v2/v3/v4
 // alike, see docs/deployments.md) to the real v4 governance Safe
-// (2-of-2, Randy + Eudo), alongside the existing ADMIN wallet, not
-// replacing it. Randy's own explicit decision: keep both holders for now
+// (2-of-2 multisig of the project's real signers), alongside the existing
+// ADMIN wallet, not replacing it. A deliberate decision: keep both holders for now
 // -- the Safe's real propose/sign/execute flow has never been exercised
 // end to end yet, and revoking the ADMIN wallet's GOVERNANCE_ROLE before
 // proving the Safe works in practice would leave this project's entire
@@ -79,7 +79,7 @@ async function main() {
 
   // Read-only verification, never assumed: confirm the Safe actually holds
   // the role now, AND confirm the ADMIN wallet still holds it too (this
-  // script only ever adds, per Randy's explicit decision not to revoke yet).
+  // script only ever adds, a deliberate decision not to revoke yet).
   const safeHasRoleAfter = await roles.read.hasRole([GOVERNANCE_ROLE, SAFE_ADDRESS]);
   const adminHasRoleAfter = await roles.read.hasRole([GOVERNANCE_ROLE, ADMIN_GOVERNANCE_ADDRESS]);
   console.log(`Verified onchain: Safe hasRole(GOVERNANCE_ROLE)=${safeHasRoleAfter}, ADMIN wallet hasRole(GOVERNANCE_ROLE)=${adminHasRoleAfter}`);

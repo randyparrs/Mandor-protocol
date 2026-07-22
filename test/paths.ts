@@ -1,4 +1,4 @@
-// Regression coverage for the exact concern Randy raised: a default data
+// Regression coverage for a real concern: a default data
 // path built from process.cwd() (the bug this file exists to prevent) would
 // silently resolve to a different location if the process were ever
 // launched from a directory other than the project root, breaking the

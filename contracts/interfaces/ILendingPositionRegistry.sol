@@ -36,7 +36,7 @@ interface ILendingPositionRegistry {
     /// disproportionate here). Reverts if the position is not actually
     /// past lendingPositionForceUnwindSeconds. Pays the caller via
     /// IStaleWithdrawalBountyPayer, a duplicated-by-design mirror of
-    /// IAutoPausePayer, never the same mechanism (Randy's explicit
+    /// IAutoPausePayer, never the same mechanism (a deliberate
     /// decision: different trigger, likely different economics over
     /// time, not worth coupling).
     function checkAndInitiateStaleWithdrawal(uint256 positionId) external;
@@ -73,7 +73,7 @@ interface ILendingPositionRegistry {
 /// LendingPositionRegistry can trigger the stale-withdrawal bounty payout
 /// out of the vault's own assets. Deliberately a SEPARATE interface and a
 /// separate, duplicated cap/payout mechanism from IAutoPausePayer, not a
-/// generalization of it -- Randy's explicit decision (this trigger
+/// generalization of it -- a deliberate decision (this trigger
 /// compensates for initiating a withdrawal whose real execution happens on
 /// a different chain, with different gas economics than an Arc-local
 /// auto-pause; coupling them now risks having to split them apart again

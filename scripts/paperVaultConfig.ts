@@ -111,7 +111,7 @@ export function buildPaperPolicyLimitsText(): string {
 export const PAPER_STRATEGY_VERSION = "paper-demo-v1";
 
 // Switched from v3's yield-seeking text to v5's ergodic-rebalancing demo
-// text (2026-07-20, per Randy's own explicit request): since the real v5
+// text (2026-07-20): since the real v5
 // vault cannot execute real cirBTC trades yet (Blocker A/B, see
 // docs/v5-ergodic-rebalancing.md), the Paper Vault is currently the ONLY
 // place that can demonstrate v5's full bidirectional rebalancing

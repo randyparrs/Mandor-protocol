@@ -5,8 +5,8 @@ import App from "./App";
 import { ARC_TESTNET } from "./lib/arcChain";
 
 // Same provider, same config shape as Vpay's proven main.tsx
-// (design_handoff_vpay/app/src/main.tsx), the pattern Randy asked to
-// reuse rather than reinvent. VITE_PRIVY_APP_ID is a plain VITE_-prefixed
+// (design_handoff_vpay/app/src/main.tsx), an established pattern reused
+// rather than reinvented. VITE_PRIVY_APP_ID is a plain VITE_-prefixed
 // var, picked up by Vite's default import.meta.env exposure, no custom
 // vite.config.ts define needed (unlike Circle's setup, see
 // experiments/circle-wallets/README.md).

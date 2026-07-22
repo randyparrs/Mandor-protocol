@@ -8,7 +8,7 @@
 // The four evaluation criteria and the four concrete numeric triggers
 // (5% minimum fee APR to enter, 48h out-of-range reposition/exit, 3%
 // impermanent loss exit, 50%+ pool liquidity drop reduce exposure) are
-// Randy's own, confirmed verbatim. The explicit cirBTC reasoning note
+// this project's own confirmed values, verbatim. The explicit cirBTC reasoning note
 // mirrors scripts/runDecisionCycle.ts's own V2_CIRBTC_RESTRICTION_NOTE
 // pattern exactly, so the agent's reasoning explains why criterion 2 is a
 // hard constraint, not just that it is one.

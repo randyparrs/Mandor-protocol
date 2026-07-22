@@ -313,7 +313,7 @@ enough to skip the delay either).
 
 **Roles** (least privilege): `ADMIN` (team multisig, create vaults, grant/
 revoke roles, propose `CapitalLimitRegistry` cap changes, see above),
-`PAUSER` (small multisig, e.g. Randy + brother, pause/unpause per vault,
+`PAUSER` (small multisig of the project's real signers, pause/unpause per vault,
 cancel a pending router change, dust sweep, or capital-limit change during
 its timelock, never touches policy limits or withdrawals), `KEEPER` (the
 executor service's onchain identity, can only call `executeDecision`,

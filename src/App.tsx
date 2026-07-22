@@ -231,8 +231,8 @@ export default function App() {
           wallet required to view. Kept in its own section with its own
           heading and its own aggressively-labeled component
           (PaperVaultTimeline), never mixed into the real timeline above,
-          per Randy's explicit ask that this can never read as real
-          activity, even to someone skimming or screenshotting the page. */}
+          so this can never read as real activity, even to someone
+          skimming or screenshotting the page. */}
       <h2>Paper Vault (Simulated Trading, Demo Only)</h2>
       <p style={{ fontSize: 13, color: "#666" }}>
         A separate, permissive-risk demo vault that reasons over real market data but never executes onchain and never touches real funds. Shown here purely to demonstrate a richer variety of AI decisions than the conservative real vaults above typically produce.
@@ -278,7 +278,7 @@ export default function App() {
           {/* Repeated here, not just near the vault picker above: this is
               the actual point of the deposit action, someone who scrolled
               past the selector must still see it right before depositing
-              into v2, per Randy's explicit ask. */}
+              into v2. */}
           <KnownLimitations limitations={vault.knownLimitations ?? []} />
           <div>
             <input type="number" min="0" step="any" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} placeholder="e.g. 1" style={{ width: 100 }} />{" "}

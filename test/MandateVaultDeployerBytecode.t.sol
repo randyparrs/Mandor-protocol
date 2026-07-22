@@ -20,8 +20,8 @@ import {IVaultPolicy} from "../contracts/interfaces/IVaultPolicy.sol";
 /// instance was discovered live to hit EIP-170's 24,576-byte limit itself
 /// -- MandateVault's real creation code, 26,576 bytes, is over that limit,
 /// confirmed via a real `cast run` CreateContractSizeLimit revert, not a
-/// gas problem). Per Randy's explicit requirement: this low-level
-/// deployment mechanism gets the same rigor as anything else trusted in
+/// gas problem). This low-level deployment mechanism deliberately gets
+/// the same rigor as anything else trusted in
 /// this project, not just "existing tests still pass." See
 /// MandateVaultDeployer.sol's own top-of-file comment and
 /// docs/deployments.md's v4 section for the full numbers and diagnostic

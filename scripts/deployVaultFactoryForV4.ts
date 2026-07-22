@@ -49,8 +49,8 @@
 // already spent on that specific purpose) or any other key with real
 // authority elsewhere in this project. The real ADMIN key is only needed
 // afterward, once, for the actual createVault call
-// (scripts/deployVaultV4.ts) -- explicitly HELD OFF per Randy's own
-// instruction until the three real v4 blockers (CCTP TokenMessenger/
+// (scripts/deployVaultV4.ts) -- explicitly HELD OFF deliberately until
+// the three real v4 blockers (CCTP TokenMessenger/
 // domain addresses, the 2-of-3 Safe multisig, the Arbitrum Sepolia keeper
 // wallet) are resolved, one at a time.
 //
@@ -307,7 +307,7 @@ async function main() {
     throw new Error("New VaultFactory/MandateVaultDeployer wiring does not match what was requested. Do not treat this bootstrap as complete.");
   }
 
-  // 7. The critical confirmation Randy explicitly asked for: the real v3
+  // 7. The critical confirmation this bootstrap must prove: the real v3
   // VaultFactory must remain COMPLETELY untouched by this bootstrap --
   // re-read its full state now and diff against what was captured in
   // step 0, not merely assume nothing changed because this script never

@@ -15,9 +15,9 @@
 // otherwise HOLD forever, monotonically draining cirBTC exposure toward
 // zero with no way back) -- a materially different, and arguably
 // nonsensical, strategy than either "true ergodic rebalancing" or v2's
-// own capped-entry design. Randy's own explicit framing of this
-// limitation ("this block prevents the core mechanism from working with
-// real capital") is exactly this ratchet effect, so the honest choice
+// own capped-entry design. This limitation ("this block prevents the
+// core mechanism from working with real capital") is exactly this
+// ratchet effect, so the honest choice
 // here is to have the agent keep proposing the TRUE target-weight
 // decision (in both directions), fully transparent in the decision log
 // about what the strategy actually wants to do, while being explicitly

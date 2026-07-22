@@ -203,7 +203,7 @@ export class DecisionPipeline {
   }
 
   /// @notice The ONLY auto-confirmation path this system has, and
-  /// deliberately narrow, confirmed explicitly with Randy: HOLD never
+  /// deliberately narrow: HOLD never
   /// moves funds or changes state (the keeper always submits it with an
   /// empty swap-leg array), so auto-confirming it is functionally
   /// equivalent to a human clicking confirm every time, just unattended.

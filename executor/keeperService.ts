@@ -14,8 +14,8 @@
 // duplicated module for v4's newer struct shape, sharing most of this
 // file's logic by copy, not by import (same "new version = new deployment,
 // never touch a live one" principle already applied to the contracts
-// themselves, extended to this executor layer, Randy's own explicit
-// decision). scripts/runDecisionCycle.ts's real, scheduled production cycle
+// themselves, extended to this executor layer, a deliberate decision).
+// scripts/runDecisionCycle.ts's real, scheduled production cycle
 // for v1/v2 depends on THIS file's ABI staying exactly as-is.
 //
 // Consequence: a security-relevant fix discovered in one of these two files
@@ -508,7 +508,7 @@ function requireIndependentReferencePriceToBuy(symbol: AssetSymbol): void {
 /// before this vault mints/increases a position to force it into a bad
 /// range or an unfavorable amount0/amount1 split, and this vault's own
 /// LP valuation (MandateVault.sol's _valueLpPositions) reads that exact
-/// same manipulable spot price. Confirmed with Randy: both of v3's only
+/// same manipulable spot price. Confirmed: both of v3's only
 /// two real-liquidity pools (WUSDC/cirBTC, EURC/cirBTC) involve cirBTC,
 /// so this blocks real LP_OPEN/LP_INCREASE execution entirely today,
 /// same documented, disclosed situation as v2's cirBTC ENTER, until an
@@ -891,7 +891,7 @@ export class KeeperService implements Executor {
       }
 
       // Point 7: EMERGENCY_EXIT_TO_STABLE self-consistency gate, only for
-      // this action, per Randy's explicit confirmation this round.
+      // this action, confirmed deliberately.
       if (decision.action === "EMERGENCY_EXIT_TO_STABLE") {
         const agrees = await this.checkEmergencyExitSelfConsistency();
         if (!agrees) {
@@ -1086,7 +1086,7 @@ export class KeeperService implements Executor {
   /// @notice Standard self-consistency: one fresh input, sampled
   /// SELF_CONSISTENCY_SAMPLE_COUNT times, same methodology
   /// agent/core/promptInjection.test.ts already uses. Requires unanimous
-  /// agreement, Randy's explicit call: EMERGENCY_EXIT_TO_STABLE bypasses
+  /// agreement, by deliberate design: EMERGENCY_EXIT_TO_STABLE bypasses
   /// every onchain allocation/drawdown check, so a single dissent is enough
   /// to hold off.
   private async checkEmergencyExitSelfConsistency(): Promise<boolean> {

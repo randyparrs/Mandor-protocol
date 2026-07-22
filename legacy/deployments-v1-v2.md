@@ -9,7 +9,7 @@ from `docs/deployments.md`, for historical reference only.
 ## Mandate USDC Vault (first real vault, USDC-only)
 
 Deployed 2026-07-10 via `legacy/deployArcTestnet.ts` (originally
-`scripts/deployArcTestnet.ts`), run by Randy in his own terminal
+`scripts/deployArcTestnet.ts`), run manually in a real terminal
 (keystore-protected `ARC_PRIVATE_KEY`, never handled by the AI agent). Every
 address, role assignment, and balance below was independently
 re-verified live against Arc Testnet after the fact (`eth_getCode`,
@@ -99,7 +99,7 @@ running (see git history for that verification, not repeated here).
 ## Mandate USDC+cirBTC Vault (v2, second real vault)
 
 Deployed 2026-07-11 via `legacy/deployVaultV2.ts` (originally
-`scripts/deployVaultV2.ts`), run by Randy in his own terminal
+`scripts/deployVaultV2.ts`), run manually in a real terminal
 (keystore-protected `ARC_ADMIN_PRIVATE_KEY`, the real ADMIN_ROLE holder,
 never the original deployer wallet, which renounced admin rights right
 after the first deploy). Reuses the already-deployed
@@ -134,7 +134,7 @@ does not support.
 
 ### Policy limits specific to this vault
 
-Per Randy's explicit call, more conservative than a simple "give it room"
+A deliberate choice, more conservative than a simple "give it room"
 default, for this vault's first volatile asset:
 
 - `minStableAllocationBps`: 8000 (80% minimum stable, i.e. at most 20% of

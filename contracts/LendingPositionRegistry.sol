@@ -36,7 +36,7 @@ contract LendingPositionRegistry is ILendingPositionRegistry {
     /// @dev Real "anyone can escalate" reasons, distinguished purely for
     /// event/observability clarity, mirrors AutoPaused(address,bytes32
     /// code)'s own convention. Never affects control flow: both feed the
-    /// exact same single _initiateWithdrawal path (Randy's explicit
+    /// exact same single _initiateWithdrawal path (a deliberate
     /// requirement, see docs/deployments.md's v4 section: one retrieval
     /// path, two triggers).
     bytes32 public constant REASON_MANUAL_OR_EMERGENCY = "MANUAL_OR_EMERGENCY";
@@ -76,7 +76,7 @@ contract LendingPositionRegistry is ILendingPositionRegistry {
     /// concern this project weighed for v4) must be replaceable without
     /// redeploying anything, same full propose/execute/cancel 48h timelock
     /// as MandateVault's positionManager, gated by GOVERNANCE_ROLE (in
-    /// practice, the 2-of-3 Safe multisig Randy confirmed for new v4 human
+    /// practice, the 2-of-3 Safe multisig confirmed for new v4 human
     /// roles -- this contract only ever checks the role, never how many
     /// signers back it, same convention as every other GOVERNANCE_ROLE
     /// check in this project).
@@ -173,8 +173,8 @@ contract LendingPositionRegistry is ILendingPositionRegistry {
         _requirePosition(positionId);
         // Idempotent, not reverted: the emergency-unwind path and the
         // permissionless staleness trigger can both reach the same
-        // position, and racing between them is harmless, see Randy's
-        // explicit "one single retrieval path" requirement.
+        // position, and racing between them is harmless, see the
+        // "one single retrieval path" requirement above.
         if (p.status == LendingPositionStatus.WITHDRAWAL_PENDING || p.status == LendingPositionStatus.IN_TRANSIT_BACK) {
             return;
         }
