@@ -7,8 +7,16 @@ own docs list `ARC-TESTNET` as a supported chain. **Decision: reverted to
 Privy** (proven via Vpay, see `design_handoff_vpay/app`) after real,
 repeated connection instability between the backend proxy and Circle's
 API during live testing. This folder keeps the real, working-up-to-a-point
-code so the investigation isn't wasted if Circle Wallets is revisited
-later (e.g. once Circle's own network path or SDK's HTTP client changes).
+code so the investigation isn't wasted, since Circle Wallets is the
+intended migration target, not a permanently abandoned path.
+
+**Migration plan, not just a fallback investigation**: Arc is a Circle
+network, and Circle Wallets is its own first-party wallet product for
+this ecosystem, distinct from Privy's general-purpose embedded wallets.
+The plan is to migrate to it once it reaches a stable, production-ready
+version, meaning the connection instability documented below is resolved
+(e.g. once Circle's own network path or SDK's HTTP client changes), not
+to stay on Privy indefinitely.
 
 ## What worked, verified live with real credentials
 

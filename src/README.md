@@ -22,6 +22,15 @@ secret app-level API key server-side for every meaningful action, see the
 experiments writeup). This is the whole reason Privy was the original
 Phase 1 choice and the agreed fallback.
 
+**Migration target, not a permanent choice**: Privy is the interim wallet
+provider, not the intended long-term one. Arc is a Circle network, and
+Circle Wallets is its own first-party wallet product, native to the
+ecosystem this project targets. Once Circle Wallets reaches a stable,
+production-ready version (the connection instability documented in
+`experiments/circle-wallets/README.md` resolved), the plan is to migrate
+back to it. See that file's own "To revive this later" section for the
+concrete steps.
+
 ## Setup
 
 1. Create a Privy app at [dashboard.privy.io](https://dashboard.privy.io),

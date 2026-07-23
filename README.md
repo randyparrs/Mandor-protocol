@@ -93,12 +93,13 @@ the full design.
   `VaultRegistry.sol`, a real onchain price oracle, and any further
   NAV/withdrawal mechanics beyond the existing liquid-ledger-capped
   `maxWithdraw`.
-- **Phase 5 (not started):** hardening, audit prep, bug bounty, monitoring,
-  incident-response runbook finalized.
+- **Phase 5 (roadmap):** additional vault strategies as network
+  infrastructure matures (tokenized RWA, additional volatile pairs once
+  real liquidity exists), and progressive expansion toward mainnet.
 
 ## Reference
 
-Architectural seed: Vpay (`C:\Users\randy\Desktop\design_handoff_vpay\app`), a
+Architectural seed: Vpay https://github.com/eudomar500/vpay-agent, a
 sibling project on the same stack (React/Vite, Express, Solidity + OpenZeppelin,
 Privy, an AI agent). See `docs/architecture.md` for what is reused and what had to
 go beyond Vpay's pattern.
