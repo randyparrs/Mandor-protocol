@@ -90,9 +90,17 @@ the full design.
   frontend, and three more vault versions built on top of the same shared
   contracts (v3 LP yield, v4 cross-chain lending, v5 ergodic rebalancing).
 - **Phase 4 (not started):** reputation-based progressive capital limits,
-  `VaultRegistry.sol`, a real onchain price oracle, and any further
+  `VaultRegistry.sol`, a real onchain price oracle, any further
   NAV/withdrawal mechanics beyond the existing liquid-ledger-capped
-  `maxWithdraw`.
+  `maxWithdraw`, and a revenue mechanism for the protocol itself: a
+  performance fee (a percentage of yield generated, minted as new vault
+  shares to a fee recipient, never touching depositor principal). This is
+  a business-model addition, not a change to any vault's investment
+  mechanics or strategy logic. First implemented on v6 (reusing v4's
+  cross-chain lending mechanism, currently the only strategy generating
+  real accruing yield without depending on the pending oracle
+  restriction). The intent is for this mechanism to apply across every
+  vault at mainnet, not remain specific to v6.
 - **Phase 5 (roadmap):** additional vault strategies as network
   infrastructure matures (tokenized RWA, additional volatile pairs once
   real liquidity exists), and progressive expansion toward mainnet.
