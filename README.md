@@ -5,8 +5,10 @@ vaults; each vault is managed by an autonomous AI agent that proposes
 investment decisions.
 
 > **Status note**: This protocol has gone through several iterations. **v1**
-> (USDC-only) and **v2** (USDC+cirBTC) were the first iteration --
-> HOLD/REBALANCE only, no real yield-generating mechanism -- and are now
+> (USDC-only), **v2** (USDC+cirBTC), and **v4** (cross-chain lending, first
+> design) were earlier iterations -- v1/v2 were HOLD/REBALANCE only with no
+> real yield-generating mechanism; v4 was fully designed and built but
+> superseded before any vault was deployed -- all three are now
 > **discontinued** (see [`legacy/`](legacy/)). The current, active vault
 > versions are **v3** (USDC+cirBTC LP yield via UnitFlowV3), **v5** (ergodic
 > rebalancing), **v6** (cross-chain lending, USDC bridged via CCTP to Aave v3

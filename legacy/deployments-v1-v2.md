@@ -1,10 +1,12 @@
 # Legacy deployments: v1 and v2 (discontinued)
 
 **Both vaults below are discontinued.** HOLD/REBALANCE only, no real
-yield-generating mechanism, superseded by v3 (LP yield), v4 (cross-chain
-lending), and v5 (ergodic rebalancing) -- see `docs/deployments.md` for
-the active deployment history. This record is preserved verbatim, moved
-from `docs/deployments.md`, for historical reference only.
+yield-generating mechanism, superseded by v3 (LP yield), v5 (ergodic
+rebalancing), v6 (cross-chain lending, the v4 design rebuilt and deployed),
+and v7 (WUSDC/EURC LP yield) -- see `docs/deployments.md` for the active
+deployment history. This record is preserved verbatim, moved from
+`docs/deployments.md`, for historical reference only. Note: v4 itself was
+also discontinued (built but never deployed as a vault; see `legacy/README.md`).
 
 ## Mandate USDC Vault (first real vault, USDC-only)
 
