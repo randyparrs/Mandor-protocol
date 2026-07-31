@@ -32,8 +32,14 @@ const MANDATE_VAULT_ABI = [
   // real shape predates this field), so this read must only ever be
   // attempted for a real v4 vault, see the try/catch below.
   { type: "function", name: "lendingRegistry", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-  // v3 only, always returns an empty array for v1/v2 (no LP positions
-  // ever held), see contracts/MandateVault.sol's own doc comment.
+  // v7 only. Public state var, same "does not exist at all on older
+  // versions' real deployed bytecode" reasoning as lendingRegistry above,
+  // see the try/catch around currentLpPositions below.
+  { type: "function", name: "lpRegistry", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  // v3/v6 only (v6 always returns empty, no LP mechanism at all), always
+  // returns an empty array for v1/v2 (no LP positions ever held), see
+  // contracts/MandateVault.sol's own doc comment. v7 has NO this function
+  // at all (contracts/MandateVaultLp.sol), see the try/catch below.
   {
     type: "function",
     name: "currentLpPositions",
@@ -94,6 +100,38 @@ const LENDING_POSITION_REGISTRY_ABI = [
 // exactly (Solidity enums are just uint8 indices in declaration order).
 const LENDING_POSITION_STATUS_BY_INDEX = ["IN_TRANSIT_OUT", "OPEN", "WITHDRAWAL_PENDING", "IN_TRANSIT_BACK"] as const;
 
+// v7 only. LpPositionRegistry's own real, existing public view (see
+// contracts/LpPositionRegistry.sol), read directly rather than adding a
+// matching convenience getter back onto MandateVaultLp.sol -- same
+// reasoning as LENDING_POSITION_REGISTRY_ABI above, and the same tuple
+// shape MANDATE_VAULT_ABI's own currentLpPositions already returns (v3's
+// inline version), so the exact same mapping code below can be reused
+// unchanged regardless of which one actually produced the raw array.
+const LP_POSITION_REGISTRY_ABI = [
+  {
+    type: "function",
+    name: "currentPositions",
+    stateMutability: "view",
+    inputs: [{ name: "nav", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple[]",
+        components: [
+          { name: "tokenId", type: "uint256" },
+          { name: "pool", type: "address" },
+          { name: "currentAllocationBps", type: "uint16" },
+          { name: "openValueUSDC", type: "uint256" },
+          { name: "currentValueUSDC", type: "uint256" },
+          { name: "inRange", type: "bool" },
+          { name: "outOfRangeSince", type: "uint256" },
+          { name: "poolLiquidityAtOpen", type: "uint128" },
+          { name: "currentPoolLiquidity", type: "uint128" },
+        ],
+      },
+    ],
+  },
+] as const;
+
 export interface KnownAsset {
   symbol: AssetSymbol;
   address: `0x${string}`;
@@ -133,7 +171,49 @@ export async function getVaultState(
   await sleep(RPC_PACING_MS);
   const paused = await publicClient.readContract({ address: policyAddress, abi: VAULT_POLICY_ABI, functionName: "paused" });
   await sleep(RPC_PACING_MS);
-  const rawLpPositions = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentLpPositions" });
+  // Read defensively, same "one obvious, safe fallback, a shared file
+  // stays correct for every vault version without needing its own
+  // duplicate" reasoning already established for lendingRegistry below:
+  // v1/v2/v3/v6 vaults have a real currentLpPositions() on their own
+  // deployed bytecode (v6 always returns empty, no LP mechanism at all);
+  // v7 (contracts/MandateVaultLp.sol) does NOT -- that call reverts
+  // (wrong selector), not returns empty, since the function simply does
+  // not exist there. On that specific failure, fall back to reading
+  // lpRegistry() from the vault and querying LpPositionRegistry directly
+  // instead (the same tuple shape, see LP_POSITION_REGISTRY_ABI's own doc
+  // comment) -- and if THAT also fails for any reason, default to empty
+  // rather than ever letting an optional read break vault state entirely.
+  let rawLpPositions: readonly {
+    tokenId: bigint;
+    pool: `0x${string}`;
+    currentAllocationBps: number;
+    openValueUSDC: bigint;
+    currentValueUSDC: bigint;
+    inRange: boolean;
+    outOfRangeSince: bigint;
+    poolLiquidityAtOpen: bigint;
+    currentPoolLiquidity: bigint;
+  }[] = [];
+  try {
+    rawLpPositions = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "currentLpPositions" });
+  } catch {
+    try {
+      const lpRegistryAddress = await publicClient.readContract({ address: vaultAddress, abi: MANDATE_VAULT_ABI, functionName: "lpRegistry" });
+      await sleep(RPC_PACING_MS);
+      if (lpRegistryAddress !== "0x0000000000000000000000000000000000000000") {
+        rawLpPositions = await publicClient.readContract({
+          address: lpRegistryAddress,
+          abi: LP_POSITION_REGISTRY_ABI,
+          functionName: "currentPositions",
+          args: [totalAssetsRaw],
+        });
+      }
+    } catch {
+      // Neither currentLpPositions() nor lpRegistry() exist/succeeded:
+      // treat as "no LP capability for this vault", never rethrown.
+      rawLpPositions = [];
+    }
+  }
   await sleep(RPC_PACING_MS);
 
   const baseAsset = assets.find((a) => a.isBaseAsset);

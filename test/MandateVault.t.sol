@@ -75,7 +75,8 @@ contract MandateVaultTest is Test {
                 lendingReportStaleAfterSeconds: 0,
                 lendingReportMaxDeviationBps: 0,
                 lendingPositionForceUnwindSeconds: 0,
-                maxLendingAllocationBps: 0
+                maxLendingAllocationBps: 0,
+                performanceFeeBps: 0
             })
         );
         vault.setPolicy(address(policy));

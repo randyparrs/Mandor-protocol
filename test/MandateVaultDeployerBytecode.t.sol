@@ -96,7 +96,8 @@ contract MandateVaultDeployerBytecodeTest is Test {
                 lendingReportStaleAfterSeconds: 0,
                 lendingReportMaxDeviationBps: 0,
                 lendingPositionForceUnwindSeconds: 0,
-                maxLendingAllocationBps: 0
+                maxLendingAllocationBps: 0,
+                performanceFeeBps: 0
             }),
             seedAmount: 100e18,
             cctpTokenMessenger: address(0)

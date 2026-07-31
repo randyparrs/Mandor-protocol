@@ -1,0 +1,226 @@
+import React from 'react';
+import Hoverable from '../components/Hoverable';
+import type { ShellVals } from '../types';
+
+export default function TimelinePage({ v }: { v: ShellVals }) {
+  return (
+    <>
+    <main data-screen-label="Decision Timeline" style={{ flex: '1', minHeight: '0', overflowY: 'auto', padding: '20px 28px 48px' }}>
+      <div style={{ maxWidth: '880px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {(v.tlFilters || []).map((f: any, $index: number) => (
+            <React.Fragment key={$index}>
+              <Hoverable as="button" onClick={f.select} style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', letterSpacing: '0.06em', color: f.color, background: f.bg, border: `1px solid ${f.border}`, borderRadius: '999px', padding: '6px 14px', cursor: 'pointer', transition: 'border-color 0.15s ease, color 0.15s ease' }} hover={{ borderColor: '#3A4152', color: '#FFFFFF' }}>
+                {f.label}
+              </Hoverable>
+            </React.Fragment>
+          ))}
+        </div>
+        {v.tlEmpty && (
+          <>
+          <div style={{ border: '1px dashed #242936', borderRadius: '12px', display: 'grid', placeItems: 'center', padding: '56px 24px' }}>
+            <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '12px', letterSpacing: '0.08em', color: '#4B5563' }}>
+              No decisions recorded for this vault yet.
+            </span>
+          </div>
+          </>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {(v.tlDecisions || []).map((d: any, $index: number) => (
+            <React.Fragment key={$index}>
+              <div style={{ display: 'flex', gap: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '14px', flexShrink: '0' }}>
+                  <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: d.aColor, boxShadow: '0 0 0 3px rgba(148,163,184,0.08)', marginTop: '24px', flexShrink: '0' }}></span>
+                  <span style={{ flex: '1', width: '1px', background: 'linear-gradient(180deg, #242936 0%, #242936 70%, transparent 100%)', marginTop: '8px' }}></span>
+                </div>
+                <Hoverable as="div" style={{ flex: '1', minWidth: '0', background: 'rgba(22,25,32,0.85)', backdropFilter: 'blur(8px)', border: '1px solid #242936', borderRadius: '12px', padding: '18px 20px', marginBottom: '18px', display: 'flex', flexDirection: 'column', gap: '12px', transition: 'border-color 0.2s ease' }} hover={{ borderColor: '#3A4152' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '14px', fontWeight: '500', letterSpacing: '0.04em', color: d.aColor }}>
+                      {d.action}
+                    </span>
+                    <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10px', letterSpacing: '0.08em', color: d.aColor, border: `1px solid ${d.aBorder}`, borderRadius: '999px', padding: '3px 10px' }}>
+                      {d.status}
+                    </span>
+                    <span style={{ marginLeft: 'auto', fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.06em', color: d.vColor, border: `1px solid ${d.vBorder}`, borderRadius: '4px', padding: '3px 9px', flexShrink: '0' }}>
+                      {d.ver}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', color: '#6B7280' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <rect x="2.5" y="3.5" width="11" height="10" rx="1.5"></rect>
+                        <path d="M2.5 6.5h11M5.5 2v2.5M10.5 2v2.5"></path>
+                      </svg>
+                      {d.time}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', color: '#6B7280' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z"></path>
+                      </svg>
+                      Confidence {d.confidence}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', color: '#6B7280' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <rect x="3" y="3" width="10" height="10" rx="2"></rect>
+                        <circle cx="6.3" cy="6.3" r="0.8" fill="#6B7280" stroke="none"></circle>
+                        <circle cx="9.7" cy="6.3" r="0.8" fill="#6B7280" stroke="none"></circle>
+                        <path d="M6 9.5h4"></path>
+                      </svg>
+                      {d.model}
+                    </span>
+                  </div>
+                  <div style={{ borderTop: '1px solid #1D212B', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"></path>
+                      </svg>
+                      <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                        OPERATION DETAIL
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '6px 24px' }}>
+                      {(d.op || []).map((kv: any, $index: number) => (
+                        <React.Fragment key={$index}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                            <span style={{ fontSize: '12px', color: '#6B7280' }}>
+                              {kv.k}
+                            </span>
+                            <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '12px', color: '#E2E8F0', textAlign: 'right' }}>
+                              {kv.v}
+                            </span>
+                          </div>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '1px solid #1D212B', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z"></path>
+                        <path d="M12.5 11l0.6 1.4L14.5 13l-1.4 0.6L12.5 15l-0.6-1.4L10.5 13l1.4-0.6z"></path>
+                      </svg>
+                      <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                        REASONING
+                      </span>
+                    </div>
+                    <p style={{ margin: '0', fontSize: '13px', lineHeight: '1.7', color: '#A5ACB8' }}>
+                      {d.reasoning}
+                    </p>
+                  </div>
+                  <div style={{ borderTop: '1px solid #1D212B', paddingTop: '12px', display: 'flex', flexDirection: 'column' }}>
+                    <Hoverable as="button" onClick={d.traceToggle} style={{ display: 'flex', alignItems: 'center', gap: '7px', width: '100%', background: 'transparent', border: 'none', padding: '0', cursor: 'pointer', color: '#6B7280' }} hover={{ color: '#FFFFFF' }}>
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                        <path d="M5 2.5c-1.4 0-2 .8-2 2v1.8c0 .9-.4 1.7-1.2 1.7.8 0 1.2.8 1.2 1.7v1.8c0 1.2.6 2 2 2M11 2.5c1.4 0 2 .8 2 2v1.8c0 .9.4 1.7 1.2 1.7-.8 0-1.2.8-1.2 1.7v1.8c0 1.2-.6 2-2 2"></path>
+                      </svg>
+                      <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: 'currentColor' }}>
+                        THINKING TRACE
+                      </span>
+                      <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'currentColor' }}>
+                        {d.traceChevron}
+                      </span>
+                    </Hoverable>
+                    <div style={{ display: 'grid', gridTemplateRows: d.traceRows, transition: 'grid-template-rows 0.3s ease-in-out' }}>
+                      <div style={{ overflow: 'hidden', minHeight: '0' }}>
+                        <pre style={{ margin: '10px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', lineHeight: '1.7', color: '#6B7280', background: '#0D0E12', border: '1px solid #1D212B', borderRadius: '8px', padding: '12px 14px' }}>
+                          {d.trace}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '1px solid #1D212B', paddingTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px 24px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                          <path d="M8 2l5 2v4c0 3.2-2.2 5.3-5 6-2.8-.7-5-2.8-5-6V4z"></path>
+                          <path d="M5.8 8l1.6 1.6 2.8-3.2"></path>
+                        </svg>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                          OFFCHAIN CHECK
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '12.5px', lineHeight: '1.6', color: '#94A3B8' }}>
+                        {d.offchain}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                          <path d="M8 2.5L14.5 13.5H1.5z"></path>
+                          <line x1="8" y1="7" x2="8" y2="10.5"></line>
+                          <circle cx="8" cy="12" r="0.4" fill="#6B7280" stroke="none"></circle>
+                        </svg>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                          ANOMALY ALERTS
+                        </span>
+                      </div>
+                      {d.hasAnomaly && (
+                        <>
+                        <span style={{ fontSize: '12.5px', lineHeight: '1.6', color: '#F59E0B' }}>
+                          {d.anomaly}
+                        </span>
+                        </>
+                      )}
+                      {d.noAnomaly && (
+                        <>
+                        <span style={{ fontSize: '12.5px', color: '#4B5563' }}>
+                          None detected
+                        </span>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                          <circle cx="8" cy="8" r="6"></circle>
+                          <path d="M8 4.5V8l2.5 1.5"></path>
+                        </svg>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                          OPS STATUS
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '12.5px', lineHeight: '1.6', color: '#94A3B8' }}>
+                        {d.ops}
+                      </span>
+                    </div>
+                  </div>
+                  {d.hasOnchain && (
+                    <>
+                    <div style={{ borderTop: '1px solid #1D212B', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6B7280" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                          <path d="M6.5 9.5l3-3"></path>
+                          <path d="M5.2 7.2L3.6 8.8a2.4 2.4 0 0 0 3.4 3.4l1.6-1.6"></path>
+                          <path d="M10.8 8.8l1.6-1.6a2.4 2.4 0 0 0-3.4-3.4L7.4 5.4"></path>
+                        </svg>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '10.5px', letterSpacing: '0.1em', color: '#6B7280' }}>
+                          ONCHAIN RESULT
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '12px', color: '#E2E8F0' }}>
+                          {d.hash}
+                        </span>
+                        <span style={{ fontFamily: '\'JetBrains Mono\', monospace', fontSize: '11px', color: '#6B7280' }}>
+                          Block {d.block}
+                        </span>
+                        <Hoverable as="a" href={d.url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginLeft: 'auto', fontSize: '11.5px', fontWeight: '500', color: '#94A3B8', textDecoration: 'underline' }} hover={{ color: '#FFFFFF' }}>
+                          Arcscan
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden={'true'} style={{ flexShrink: '0' }}>
+                            <path d="M6.5 3h6.5v6.5M13 3L7 9"></path>
+                            <path d="M11 9.5V13H3V5h3.5"></path>
+                          </svg>
+                        </Hoverable>
+                      </div>
+                    </div>
+                    </>
+                  )}
+                </Hoverable>
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    </main>
+    </>
+  );
+}

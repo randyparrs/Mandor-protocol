@@ -76,6 +76,14 @@ describe("hasIndependentReferencePrice", () => {
   });
 
   it("fails closed (false) for any asset symbol with no configured independent reference source", () => {
-    assert.equal(hasIndependentReferencePrice("EURC"), false);
+    assert.equal(hasIndependentReferencePrice("USYC"), false);
+  });
+
+  it("is true for EURC now that it has a genuinely independent reference source (ECB EUR/USD via Frankfurter, not the same CoinGecko call as its own priceUSDC)", () => {
+    assert.equal(hasIndependentReferencePrice("EURC"), true);
+  });
+
+  it("is true for WUSDC, a deterministic 1:1 wrap of native USDC, same fixed-peg reasoning as USDC itself", () => {
+    assert.equal(hasIndependentReferencePrice("WUSDC"), true);
   });
 });

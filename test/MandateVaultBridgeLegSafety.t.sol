@@ -92,7 +92,8 @@ contract MandateVaultBridgeLegSafetyTest is Test {
                 lendingReportStaleAfterSeconds: 86_400,
                 lendingReportMaxDeviationBps: 200,
                 lendingPositionForceUnwindSeconds: 604_800,
-                maxLendingAllocationBps: 10_000
+                maxLendingAllocationBps: 10_000,
+                performanceFeeBps: 0
             })
         );
         vault.setPolicy(address(policy));

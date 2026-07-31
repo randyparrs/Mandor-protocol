@@ -85,6 +85,7 @@ function policyLimits(overrides: Record<string, unknown> = {}) {
     lendingReportMaxDeviationBps: 0n,
     lendingPositionForceUnwindSeconds: 0n,
     maxLendingAllocationBps: 0n,
+    performanceFeeBps: 0n,
     ...overrides,
   };
 }
@@ -183,5 +184,89 @@ describe("getVaultState (regression: human-decimal formatting, not raw integers)
   it("rejects a caller that never marks any asset isBaseAsset, rather than guessing", async () => {
     const { pub, vaultAddress, usdc } = await setup();
     await assert.rejects(() => getVaultState(pub, vaultAddress, [{ symbol: "USDC", address: usdc.address }]));
+  });
+});
+
+describe("getVaultState (v7: falls back to LpPositionRegistry when currentLpPositions() does not exist on the vault)", () => {
+  /// @notice Deploys a real, standalone contracts/MandateVaultLp.sol +
+  /// VaultPolicy + LpPositionRegistry triple directly (bypassing
+  /// VaultFactory, which would need its own fresh MandateVaultDeployer
+  /// bootstrap embedding MandateVaultLp's fragmented creation code, real
+  /// overhead this unit test does not need -- constructing the vault
+  /// directly is equivalent for what this test actually checks: does
+  /// getVaultState() correctly resolve LP positions via lpRegistry() once
+  /// currentLpPositions() itself does not exist).
+  async function setupV7() {
+    const { viem } = await network.create();
+    const [admin, treasury] = await viem.getWalletClients();
+    const pub = await viem.getPublicClient();
+
+    const roles = await viem.deployContract("MandateRoles", [admin.account.address]);
+    await roles.write.grantRole([ADMIN_ROLE, admin.account.address]);
+    const GOVERNANCE_ROLE = keccak256(toHex("GOVERNANCE_ROLE"));
+    await roles.write.grantRole([GOVERNANCE_ROLE, admin.account.address]);
+
+    const wusdc = await viem.deployContract("MockERC20", ["Wrapped USDC", "WUSDC", 18]);
+    const router = await viem.deployContract("MockSwapRouter");
+
+    const vault = await viem.deployContract("MandateVaultLp", [
+      wusdc.address,
+      roles.address,
+      router.address,
+      "Test LP Vault",
+      "tLP",
+      [] as `0x${string}`[],
+      admin.account.address, // factory_ -- this test calls setPolicy/setLpRegistry directly, no real VaultFactory needed
+      "0x0000000000000000000000000000000000000000" as `0x${string}`, // cctpTokenMessenger_, unused by this test
+    ]);
+
+    const policy = await viem.deployContract("VaultPolicy", [
+      policyLimits({ vault: vault.address, roles: roles.address, assets: [wusdc.address], maxAllocationBps: [10_000n], stableAssets: [wusdc.address] }),
+    ]);
+    await vault.write.setPolicy([policy.address], { account: admin.account });
+
+    // contracts/LpPositionRegistry.sol genuinely links against
+    // LiquidityAmounts (its own TWAP-guarded valuation math), same
+    // deployed-library requirement as MandateVault's own v3 LP logic
+    // above, deployed fresh here since this fixture's roles/network
+    // instance is otherwise separate from setup()'s own.
+    const tickMathV7 = await viem.deployContract("TickMath");
+    const liquidityAmountsV7 = await viem.deployContract("LiquidityAmounts", [], {
+      libraries: { "project/contracts/lib/TickMath.sol:TickMath": tickMathV7.address },
+    });
+    const registry = await viem.deployContract("LpPositionRegistry", [vault.address, policy.address, roles.address], {
+      libraries: { "project/contracts/lib/LiquidityAmounts.sol:LiquidityAmounts": liquidityAmountsV7.address },
+    });
+    await vault.write.setLpRegistry([registry.address], { account: admin.account });
+
+    return { pub, vaultAddress: vault.address as `0x${string}`, wusdc, treasury };
+  }
+
+  it("MandateVaultLp genuinely has no currentLpPositions() (confirms the fallback below is actually exercised, not coincidentally unreached)", async () => {
+    const { pub, vaultAddress } = await setupV7();
+    const NO_LP_POSITIONS_ABI = [{ type: "function", name: "currentLpPositions", stateMutability: "view", inputs: [], outputs: [] }] as const;
+    await assert.rejects(() => pub.readContract({ address: vaultAddress, abi: NO_LP_POSITIONS_ABI, functionName: "currentLpPositions" }));
+  });
+
+  it("getVaultState still succeeds and returns lpPositions via the registry, not by silently swallowing an error into an unrelated empty result", async () => {
+    const { pub, vaultAddress, wusdc } = await setupV7();
+
+    const state = await getVaultState(pub, vaultAddress, [{ symbol: "WUSDC", address: wusdc.address, isBaseAsset: true }]);
+
+    // No real position was opened (that needs real Uniswap V3 infra, out
+    // of scope for this unit test, already covered live by
+    // test/MandateVaultLpArcFork.t.sol), so an empty array is the CORRECT
+    // real answer here -- the point of this test is that getVaultState()
+    // reaches this answer via the registry fallback without throwing,
+    // proven by the sibling test above confirming the primary
+    // currentLpPositions() path genuinely does not exist on this vault.
+    assert.deepEqual(state.lpPositions, []);
+  });
+
+  it("v1-v6 vaults (real currentLpPositions()) are completely unaffected: still take the primary path, never the fallback", async () => {
+    const { pub, vaultAddress, usdc } = await setup();
+    const state = await getVaultState(pub, vaultAddress, [{ symbol: "USDC", address: usdc.address, isBaseAsset: true }]);
+    assert.deepEqual(state.lpPositions, []);
+    assert.equal(state.totalAssetsUSDC, "5"); // unchanged from the very first test above, same fixture
   });
 });

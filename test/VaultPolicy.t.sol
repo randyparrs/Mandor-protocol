@@ -57,7 +57,8 @@ contract VaultPolicyTest is Test {
         lendingReportStaleAfterSeconds: 0,
         lendingReportMaxDeviationBps: 0,
         lendingPositionForceUnwindSeconds: 0,
-        maxLendingAllocationBps: 0
+        maxLendingAllocationBps: 0,
+        performanceFeeBps: 0
         });
         policy = new VaultPolicy(limits);
     }
@@ -683,7 +684,8 @@ contract VaultPolicyTest is Test {
                 lendingReportStaleAfterSeconds: 0,
                 lendingReportMaxDeviationBps: 0,
                 lendingPositionForceUnwindSeconds: 0,
-                maxLendingAllocationBps: 0
+                maxLendingAllocationBps: 0,
+                performanceFeeBps: 0
             })
         );
     }

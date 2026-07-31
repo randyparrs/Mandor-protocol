@@ -21,14 +21,53 @@ export interface StableAssetPrice {
 
 // Real-world reference price data for assets whose peg target isn't a flat
 // 1.00 USD (e.g. EURC tracks EUR, not USD, so its USD value legitimately
-// floats with EUR/USD FX, that is normal, not a depeg). USDC is the only
-// entry actually needed today (the live vault is USDC-only, see
-// docs/deployments.md); documented here rather than assumed for any future
-// stable asset, since a wrong flat assumption would be exactly the kind of
-// fabricated data this module exists to avoid.
-const STABLE_ASSET_CONFIG: Partial<Record<AssetSymbol, { coingeckoId: string; referencePriceUSDC: string }>> = {
+// floats with EUR/USD FX, that is normal, not a depeg). `referencePriceUSDC`
+// is either a fixed string (a genuinely flat peg target, e.g. USDC's "1.00")
+// or a function fetching a live, INDEPENDENT number (for a floating peg
+// target like EURC's -- a hardcoded EUR/USD rate would go stale within
+// days and, more importantly, would eventually make VaultPolicy's
+// oracle-deviation check compare priceUSDC against a number that no longer
+// reflects reality, silently defeating it exactly the way a
+// self-referencing pair already does for cirBTC, see
+// getVolatileAssetPriceUSDC's own SECURITY note below -- just slower to
+// manifest, not a different risk in kind).
+const STABLE_ASSET_CONFIG: Partial<Record<AssetSymbol, { coingeckoId: string; referencePriceUSDC: string | (() => Promise<string>) }>> = {
   USDC: { coingeckoId: "usd-coin", referencePriceUSDC: "1.00" },
+  // WUSDC wraps Arc's own native gas currency (itself USDC-denominated),
+  // a deterministic 1:1 contract-enforced wrap/unwrap, not a market-floated
+  // peg -- same "1.00 flat target" reasoning as USDC itself, already the
+  // project's own existing assumption (see VolatileAssetQuoteConfig's own
+  // quoteAgainstReferencePriceUSDC field below, which already treats WUSDC
+  // this way for cirBTC's pricing).
+  WUSDC: { coingeckoId: "usd-coin", referencePriceUSDC: "1.00" },
+  // EURC tracks EUR, a genuinely floating peg target against USD, so
+  // referencePriceUSDC here is fetched live and independently from a
+  // real-world, non-crypto source (the ECB's own daily reference rate, via
+  // the free, no-key api.frankfurter.dev, confirmed live 2026-07-27:
+  // EUR/USD = 1.1389, closely matching CoinGecko's own EURC market price
+  // of 1.14 the same day) -- deliberately NOT the same CoinGecko call used
+  // for priceUSDC below, so a single manipulated/wrong source cannot
+  // silently self-confirm.
+  EURC: { coingeckoId: "euro-coin", referencePriceUSDC: fetchEurUsdReferenceRate },
 };
+
+/// @notice EURC's genuinely independent reference price: the ECB's own
+/// daily EUR/USD reference rate (via Frankfurter, a free, no-key API built
+/// on ECB data, not a crypto price source at all), not a second read of
+/// EURC's own market price. See STABLE_ASSET_CONFIG's own doc comment for
+/// why this must be independent, not just fresh.
+async function fetchEurUsdReferenceRate(): Promise<string> {
+  const response = await fetch("https://api.frankfurter.dev/v1/latest?from=EUR&to=USD");
+  if (!response.ok) {
+    throw new Error(`Failed to fetch a real EUR/USD reference rate from Frankfurter/ECB: HTTP ${response.status}`);
+  }
+  const data = (await response.json()) as { rates?: { USD?: number } };
+  const rate = data.rates?.USD;
+  if (typeof rate !== "number") {
+    throw new Error("Frankfurter/ECB returned no usable EUR/USD rate. Refusing to fabricate one.");
+  }
+  return rate.toString();
+}
 
 /// @notice No onchain oracle exists yet on Arc (see
 /// docs/arc-facts-to-verify.md, "Chainlink oracle feed availability on Arc"
@@ -67,10 +106,12 @@ export async function getMarketData(stableAssets: StableAssetPrice[], untrustedC
         throw new Error(`CoinGecko returned no usable price for ${asset} (${config.coingeckoId}). Refusing to fabricate one.`);
       }
 
+      const referencePriceUSDC = typeof config.referencePriceUSDC === "string" ? config.referencePriceUSDC : await config.referencePriceUSDC();
+
       return {
         asset,
         priceUSDC: priceUSD.toString(),
-        referencePriceUSDC: config.referencePriceUSDC,
+        referencePriceUSDC,
         updatedAt: now,
       };
     }),

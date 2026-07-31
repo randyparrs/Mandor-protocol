@@ -165,6 +165,15 @@ contract VaultPolicy is IVaultPolicy {
     /// text describes a mechanism that actually exists, not an aspiration.
     uint256 public immutable maxLendingAllocationBps;
 
+    /// @dev v6 only, 0 for v1-v5 (no fee mechanism). Charged only on yield
+    /// generated (price-per-share growth above its own dedicated
+    /// high-water-mark, tracked in MandateVault.sol, separate from
+    /// highWaterMarkUSDC's raw-NAV tracker used for drawdown), never on
+    /// depositor principal. Read by MandateVault via IVaultPolicy, not
+    /// evaluated by validateDecision below (a business-model parameter, not
+    /// a risk check). 1000 = 10%.
+    uint256 public immutable performanceFeeBps;
+
     /// @dev Set once in the constructor. No setter exists anywhere in this
     /// contract, loosening a limit always means deploying a new
     /// Vault+Policy pair, never mutating a live one.
@@ -206,6 +215,9 @@ contract VaultPolicy is IVaultPolicy {
         uint256 lendingReportMaxDeviationBps;
         uint256 lendingPositionForceUnwindSeconds;
         uint256 maxLendingAllocationBps;
+        // v6 only, zero-valued for v1-v5, see the immutable's own doc
+        // comment above.
+        uint256 performanceFeeBps;
     }
 
     constructor(ConstructorLimits memory limits) {
@@ -231,6 +243,7 @@ contract VaultPolicy is IVaultPolicy {
         lendingReportMaxDeviationBps = limits.lendingReportMaxDeviationBps;
         lendingPositionForceUnwindSeconds = limits.lendingPositionForceUnwindSeconds;
         maxLendingAllocationBps = limits.maxLendingAllocationBps;
+        performanceFeeBps = limits.performanceFeeBps;
 
         for (uint256 i = 0; i < limits.assets.length; i++) {
             maxAllocationBpsPerAsset[limits.assets[i]] = limits.maxAllocationBps[i];

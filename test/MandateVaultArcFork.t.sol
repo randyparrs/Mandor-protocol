@@ -132,7 +132,8 @@ contract MandateVaultArcForkTest is Test {
             lendingReportStaleAfterSeconds: 0,
             lendingReportMaxDeviationBps: 0,
             lendingPositionForceUnwindSeconds: 0,
-            maxLendingAllocationBps: 0
+            maxLendingAllocationBps: 0,
+            performanceFeeBps: 0
             })
         );
         vault.setPolicy(address(policy));
@@ -358,7 +359,8 @@ contract MandateVaultArcForkTest is Test {
             lendingReportStaleAfterSeconds: 0,
             lendingReportMaxDeviationBps: 0,
             lendingPositionForceUnwindSeconds: 0,
-            maxLendingAllocationBps: 0
+            maxLendingAllocationBps: 0,
+            performanceFeeBps: 0
             })
         );
         strictVault.setPolicy(address(strictPolicy));
@@ -497,7 +499,8 @@ contract MandateVaultArcForkTest is Test {
                 lendingReportStaleAfterSeconds: 0,
                 lendingReportMaxDeviationBps: 0,
                 lendingPositionForceUnwindSeconds: 0,
-                maxLendingAllocationBps: 0
+                maxLendingAllocationBps: 0,
+                performanceFeeBps: 0
             })
         );
     }
@@ -995,7 +998,8 @@ contract MandateVaultArcForkTest is Test {
                 lendingReportStaleAfterSeconds: 1 days,
                 lendingReportMaxDeviationBps: 1000,
                 lendingPositionForceUnwindSeconds: 7 days,
-                maxLendingAllocationBps: 10_000
+                maxLendingAllocationBps: 10_000,
+                performanceFeeBps: 0
             })
         );
     }

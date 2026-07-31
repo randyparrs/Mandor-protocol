@@ -198,6 +198,11 @@ interface IVaultPolicy {
     function lendingReportMaxDeviationBps() external view returns (uint256);
     function lendingReportStaleAfterSeconds() external view returns (uint256);
     function lendingPositionForceUnwindSeconds() external view returns (uint256);
+
+    // v6 only, always 0 for v1-v5's deployed VaultPolicy instances. Read by
+    // MandateVault's own fee-accrual logic, same exposure pattern as the
+    // lending fields above.
+    function performanceFeeBps() external view returns (uint256);
 }
 
 /// @notice The one function MandateVault must expose so VaultPolicy can

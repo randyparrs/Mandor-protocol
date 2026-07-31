@@ -37,6 +37,7 @@ function defaultLimits(overrides: Record<string, unknown> = {}) {
     lendingReportMaxDeviationBps: 0n,
     lendingPositionForceUnwindSeconds: 0n,
     maxLendingAllocationBps: 0n,
+    performanceFeeBps: 0n,
     ...overrides,
   };
 }

@@ -4,12 +4,14 @@ An AI-native investment protocol on Arc Network. Users deposit capital into
 vaults; each vault is managed by an autonomous AI agent that proposes
 investment decisions.
 
-> **Status note**: This protocol has gone through two iterations. **v1**
+> **Status note**: This protocol has gone through several iterations. **v1**
 > (USDC-only) and **v2** (USDC+cirBTC) were the first iteration --
 > HOLD/REBALANCE only, no real yield-generating mechanism -- and are now
-> **discontinued** (see [`legacy/`](legacy/)). **v3** (real Uniswap-V3-style
-> LP yield), **v4** (cross-chain lending via CCTP), and **v5** (ergodic
-> rebalancing) are the current, active product. See
+> **discontinued** (see [`legacy/`](legacy/)). The current, active vault
+> versions are **v3** (USDC+cirBTC LP yield via UnitFlowV3), **v5** (ergodic
+> rebalancing), **v6** (cross-chain lending, USDC bridged via CCTP to Aave v3
+> on Arbitrum Sepolia), and **v7** (WUSDC/EURC LP yield via UnitFlowV3). v6
+> and v7 both carry a 10% performance fee mechanism. See
 > [`docs/deployments.md`](docs/deployments.md) for the full deployment
 > history.
 
@@ -33,17 +35,21 @@ to delay.
 ## Status
 
 `VaultPolicy`, `MandateVault`, `VaultFactory`, `MandateVaultDeployer`, and
-`CapitalLimitRegistry` are deployed and live on Arc Testnet, across five
-real vault versions (see `docs/deployments.md` for the full, real address
-and transaction history of every one). **v3** (real Uniswap-V3-style LP
-yield via UnitFlowV3), **v4** (cross-chain lending, USDC bridged via CCTP
-to Aave v3 on Arbitrum Sepolia), and **v5** (ergodic rebalancing, a
-threshold-based target-weight strategy validated by real historical
-backtests, see `research/ergodic-rebalancing/REPORT.md`, before being
-built) are the current, active product; v1/v2 are discontinued, see
-`legacy/`. Foundry fuzz coverage (1000 runs per property) and stateful
-invariant tests (`test/MandateVaultInvariant.t.sol`) cover the one shared
-contract source every version deploys from, not five separate codebases.
+`CapitalLimitRegistry` are deployed and live on Arc Testnet, across four
+active vault versions (see `docs/deployments.md` for the full, real address
+and transaction history of every one). **v3** (USDC+cirBTC LP yield via
+UnitFlowV3), **v5** (ergodic rebalancing, a threshold-based target-weight
+strategy validated by real historical backtests, see
+`research/ergodic-rebalancing/REPORT.md`, before being built), **v6**
+(cross-chain lending, USDC bridged via CCTP to Aave v3 on Arbitrum Sepolia,
+10% performance fee, governance timelocks finalized 2026-07-31), and **v7**
+(WUSDC/EURC LP yield via UnitFlowV3, 10% performance fee, governance
+timelocks finalized 2026-07-31) are the current, active product; v1/v2 are
+discontinued, see `legacy/`. Foundry fuzz coverage (1000 runs per property)
+and stateful invariant tests (`test/MandateVaultInvariant.t.sol`) cover the
+shared contract sources (`MandateVault.sol`, `MandateVaultLending.sol`,
+`MandateVaultLp.sol`, `LpPositionRegistry.sol`), not four separate,
+unrelated codebases.
 
 `agent/core` is wired to the real Anthropic API, not a mock or a local
 model: `proposeDecision` reads real onchain vault state and market data,
@@ -56,11 +62,12 @@ The full real pipeline is built and verified end to end: propose (real AI
 agent call) -> offchain pre-check (advisory, never authoritative) ->
 human confirmation queue with a hard `expiresAt`
 (`server/decisionPipeline.ts`) -> keeper execution
-(`executor/keeperService.ts` for v1-v3's real deployed ABI shape,
-`executor/keeperServiceV4.ts` for v4/v5's) submits and confirms a real
-onchain `executeDecision` transaction -> `server/indexer` catches up on
-the real onchain events. Persistence (`server/db`, SQLite) survives a
-process restart; the queue and event history are not held only in memory.
+(`executor/keeperService.ts` for v3's real deployed ABI shape,
+`executor/keeperServiceV4.ts` for v5/v6's, and `executor/keeperServiceV7.ts`
+for v7's) submits and confirms a real onchain `executeDecision` transaction ->
+`server/indexer` catches up on the real onchain events. Persistence
+(`server/db`, SQLite) survives a process restart; the queue and event history
+are not held only in memory.
 
 A working frontend exists (`src/`): Privy-based wallet login, real
 deposit/withdraw flows, an AI decision timeline (thinking-token capture,
@@ -73,10 +80,13 @@ real testnet transactions, not a mock backend.
 Still not built: `VaultRegistry.sol` (the dedicated on-chain contract for
 the `strategyAuthor` field), reputation-based progressive capital limit
 tiers (`CapitalLimitRegistry` remains the fixed-cap Phase 2 stub), and a
-real onchain price oracle (Chainlink and Pyth were both live-verified as
-having real infrastructure on Arc Testnet, but neither is currently usable
-here, see `docs/arc-facts-to-verify.md`). See `docs/architecture.md` for
-the full design.
+real onchain price oracle (cirBTC and wBTC currently have no independent
+reference price source available on Arc Testnet that meets the protocol's
+own safety requirement for LP and buy decisions -- Chainlink and Pyth were
+both live-verified as present on Arc Testnet infrastructure, but neither
+currently feeds these specific pairs, which means v3 and v5 are operational
+but cannot open real LP or buy positions until this gap is resolved). See
+`docs/architecture.md` for the full design.
 
 ## Phase plan
 
@@ -87,19 +97,21 @@ the full design.
   coverage and invariant tests.
 - **Phase 3 (done):** real AI agent wiring (`agent/core`), the
   keeper/executor service, Paper Vault simulation mode, a working
-  frontend, and three more vault versions built on top of the same shared
-  contracts (v3 LP yield, v4 cross-chain lending, v5 ergodic rebalancing).
-- **Phase 4 (not started):** reputation-based progressive capital limits,
-  `VaultRegistry.sol`, a real onchain price oracle, any further
-  NAV/withdrawal mechanics beyond the existing liquid-ledger-capped
-  `maxWithdraw`, and a performance-fee mechanism (a percentage of yield
-  generated, minted as new vault shares to a fee recipient, never
-  touching depositor principal) for sustainable protocol revenue. The
-  intent is for every vault to eventually carry this mechanism at
-  mainnet.
+  frontend, and four vault versions built on top of the shared contracts:
+  v3 (USDC+cirBTC LP yield), v5 (ergodic rebalancing), v6 (cross-chain
+  lending via CCTP to Aave v3, built on `MandateVaultLending.sol`, with a
+  10% performance fee mechanism), and v7 (WUSDC/EURC LP yield, built on
+  `MandateVaultLp.sol` with a dedicated `LpPositionRegistry` for LP
+  position custody, also with a 10% performance fee mechanism).
+- **Phase 4 (roadmap):** reputation-based progressive capital limits,
+  `VaultRegistry.sol`, and a real onchain price oracle (resolving the
+  cirBTC independent price feed gap that currently blocks v3 and v5 from
+  opening live LP and buy positions -- the path exists, the infrastructure
+  gap needs to close first).
 - **Phase 5 (roadmap):** additional vault strategies as network
-  infrastructure matures (tokenized RWA, additional volatile pairs once
-  real liquidity exists), and progressive expansion toward mainnet.
+  infrastructure matures (additional volatile pairs once real liquidity
+  exists), security hardening and formal review ahead of any mainnet
+  expansion, and progressive expansion toward mainnet.
 
 ## Reference
 
