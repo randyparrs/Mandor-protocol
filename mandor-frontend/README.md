@@ -1,8 +1,8 @@
-# Mandor Protocol — frontend
+# Mandor Protocol -- frontend
 
 React + TypeScript + Vite port of the Mandor App Shell v3 design. The visual
 design, spacing, typography and component hierarchy are carried over verbatim:
-every value is an inline style object, exactly as in the source design — no CSS
+every value is an inline style object, exactly as in the source design -- no CSS
 framework, no utility classes, no design-token indirection.
 
 ## Run
@@ -39,27 +39,27 @@ src/
     SettingsPage.tsx    account, preferences, network
     PlaceholderPage.tsx empty-state fallback
   shared/money.js       currency formatting (loaded lazily by the controller)
-  styles/global.css     resets, scrollbars, keyframes only — everything else is inline
+  styles/global.css     resets, scrollbars, keyframes only -- everything else is inline
 ```
 
 ### Data flow
 
 `ShellController` owns state (active page, wallet connection, per-vault form
-state, transaction outcomes, settings) and derives a flat view-model —
-`ShellVals` — of primitives, arrays and handlers. Every component below it is
+state, transaction outcomes, settings) and derives a flat view-model --
+`ShellVals` -- of primitives, arrays and handlers. Every component below it is
 **purely presentational**: it takes `v: ShellVals` and renders. Nothing below
 the controller holds state except `Hoverable`, which tracks its own pointer
 and focus state so inline styles can express interaction.
 
 To wire this to a real backend, replace the seeded values and the vault fetch in
-`ShellController` (`componentDidMount` / `fetchVault`) — the render tree does
+`ShellController` (`componentDidMount` / `fetchVault`) -- the render tree does
 not need to change.
 
 ### Configurable inputs
 
-`ShellProps` (see `types.ts`) exposes the design-time switches — wallet
+`ShellProps` (see `types.ts`) exposes the design-time switches -- wallet
 address display, scenario (`today` / `live demo`), vault data state and
-transaction outcome — as optional props on `<ShellController />`, with
+transaction outcome -- as optional props on `<ShellController />`, with
 `defaultShellProps` as the defaults. Useful for demos, stories and tests:
 
 ```tsx
@@ -77,6 +77,6 @@ style objects over the base style, so no stylesheet is needed for state.
 - `tsconfig.json` runs `strict` with `noImplicitAny: false`; the controller's
   ported handlers are untyped by design so the port stayed 1:1. Tightening them
   is safe, incremental work.
-- Icons are inline SVG — no icon dependency.
+- Icons are inline SVG -- no icon dependency.
 - `preview-no-build.html` (project root, outside this folder) renders the app
   straight from source with in-browser Babel, for a look without installing.
